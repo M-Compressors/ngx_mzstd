@@ -1,0 +1,5 @@
+# nginx allocates a worker's connections and events with ngx_alloc() in
+# ngx_event_process_init() and never frees them: ngx_worker_process_exit()
+# destroys the cycle pool, which holds the only pointers to them, and exits.
+# LeakSanitizer reports them whenever no stale pointer to them survives.
+leak:ngx_event_process_init

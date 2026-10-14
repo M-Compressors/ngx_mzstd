@@ -1,0 +1,56 @@
+[package]
+name = "ngx_mzstd"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT"
+authors = ["Mikhail Panfilov <mikhail@panfilov.tech>"]
+description = "NGINX Zstandard compression modules (drop-in for tokers/zstd-nginx-module) built on ngx-rust and mzstd"
+publish = false
+categories = ["network-programming", "compression", "algorithms", "development-tools"]
+keywords = ["mzstd", "zstd", "zstandard", "nginx", "nginx-compression"]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+mzstd = { version = "0.2.1", default-features = false, features = ["std", "compression"] }
+ngx = { version = "0.5.1", default-features = false, features = ["std"] }
+# Required by build.rs to receive DEP_NGINX_* metadata.
+nginx-sys = "0.5.0"
+
+[dev-dependencies]
+# Tests decode what the filter produces.
+mzstd = { version = "0.2.1", default-features = false, features = ["std", "compression", "decompression"] }
+
+[build-dependencies]
+cc = "1.2"
+
+[features]
+default = ["export-modules"]
+# Generate the `ngx_modules` export table required to load the cdylib with
+# `load_module`. Disable when linking the module through the NGINX build system.
+export-modules = []
+# Build against a vendored copy of the NGINX sources (see the nginx-src crate).
+vendored = ["ngx/vendored"]
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# CI builds: unit tests, the module for the NGINX tests and the AddressSanitizer
+# build. Fat LTO with a single codegen unit is slow, and unoptimized code with
+# full debug info makes rustc's memory peak on a hosted runner; this keeps
+# release optimizations without either. The assertions add the standard
+# library's checks of unsafe preconditions, and the symbols and line tables make
+# sanitizer reports readable.
+[profile.ci]
+inherits = "release"
+lto = false
+codegen-units = 16
+debug = "line-tables-only"
+strip = false
+debug-assertions = true
+overflow-checks = true

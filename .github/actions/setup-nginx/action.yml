@@ -1,0 +1,74 @@
+name: Set up NGINX
+description: >
+  Downloads and configures an NGINX source tree for nginx-sys bindings and,
+  optionally, builds the binary for integration tests. Exports
+  NGINX_BUILD_DIR and NGINX_BINARY.
+
+inputs:
+  version:
+    description: NGINX version to build against.
+    default: "1.30.5"
+  build:
+    description: Also run `make`, producing an nginx binary.
+    default: "false"
+  configure-args:
+    description: Extra `./configure` arguments, as shell words.
+    default: ""
+  threads:
+    description: Configure with `--with-threads`, for `zstd_thread_pool`.
+    default: "true"
+  variant:
+    description: >
+      Names the build, in its directory and cache key, when `configure-args`
+      or `threads` is set.
+    default: default
+
+runs:
+  using: composite
+  steps:
+    - name: Install build dependencies
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq --no-install-recommends \
+          libclang-dev libpcre2-dev zlib1g-dev libssl-dev
+
+    - name: Restore NGINX
+      id: cache
+      uses: actions/cache@v6
+      with:
+        path: ${{ runner.temp }}/nginx-${{ inputs.version }}-${{ inputs.variant }}
+        key: nginx-${{ inputs.version }}-${{ inputs.variant }}-threads-${{ inputs.threads }}-build-${{ inputs.build }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/setup-nginx/action.yml') }}
+
+    - name: Download and configure NGINX
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: ${{ runner.temp }}
+      env:
+        VERSION: ${{ inputs.version }}
+        DIR: nginx-${{ inputs.version }}-${{ inputs.variant }}
+        BUILD: ${{ inputs.build }}
+        THREADS: ${{ inputs.threads }}
+        CONFIGURE_ARGS: ${{ inputs.configure-args }}
+      run: |
+        set -euo pipefail
+        mkdir "$DIR"
+        curl -sSfL "https://nginx.org/download/nginx-$VERSION.tar.gz" \
+          | tar xz --strip-components=1 -C "$DIR"
+        cd "$DIR"
+        if [ "$THREADS" = true ]; then
+          CONFIGURE_ARGS="--with-threads $CONFIGURE_ARGS"
+        fi
+        eval "./configure --with-compat --with-debug --with-http_ssl_module $CONFIGURE_ARGS"
+        if [ "$BUILD" = true ]; then
+          make -j"$(nproc)"
+        fi
+
+    - name: Export paths
+      shell: bash
+      env:
+        DIR: ${{ runner.temp }}/nginx-${{ inputs.version }}-${{ inputs.variant }}
+      run: |
+        dir="$DIR"
+        echo "NGINX_BUILD_DIR=$dir/objs" >> "$GITHUB_ENV"
+        echo "NGINX_BINARY=$dir/objs/nginx" >> "$GITHUB_ENV"

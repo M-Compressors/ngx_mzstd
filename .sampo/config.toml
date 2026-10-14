@@ -1,0 +1,20 @@
+# Sampo configuration
+version = 1
+
+[git]
+default_branch = "main"
+# One package per repository: tag releases as `v<version>`.
+short_tags = "ngx_mzstd"
+
+[github]
+repository = "M-Compressors/ngx_mzstd"
+
+[changelog]
+# Options for release notes generation.
+# show_commit_hash = true (default)
+# show_acknowledgments = true (default)
+
+[packages]
+# The module is shipped as source, not to crates.io (`publish = false`), but
+# Sampo still versions it, keeps CHANGELOG.md and tags releases.
+# ignore_unpublished = false (default)

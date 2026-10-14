@@ -1,0 +1,177 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: ./.github/actions/setup-nginx
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets -- -D warnings
+      - name: cargo clippy (without the ngx_modules export table)
+        run: cargo clippy --all-targets --no-default-features -- -D warnings
+
+      # `zstd_thread_pool` is compiled only for NGINX built with threads.
+      - name: Set up NGINX without threads
+        uses: ./.github/actions/setup-nginx
+        with:
+          threads: "false"
+          variant: no-threads
+      - name: cargo clippy (NGINX without threads)
+        run: cargo clippy --all-targets -- -D warnings
+
+  test:
+    name: test (nginx ${{ matrix.nginx }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        nginx: ["1.28.3", "1.30.5", "1.31.6"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/setup-nginx
+        with:
+          version: ${{ matrix.nginx }}
+          build: true
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: nginx-${{ matrix.nginx }}
+
+      # The `ci` profile keeps rustc's memory within what a hosted runner has.
+      - name: Unit tests
+        run: cargo test --profile ci
+
+      - name: Build module
+        run: cargo build --profile ci
+
+      - name: Check out nginx-tests
+        uses: actions/checkout@v7
+        with:
+          repository: nginx/nginx-tests
+          path: nginx-tests
+
+      - name: Install the zstd CLI
+        run: sudo apt-get install -y -qq --no-install-recommends zstd
+
+      - name: Integration tests
+        env:
+          TEST_NGINX_BINARY: ${{ env.NGINX_BINARY }}
+        run: |
+          export TEST_NGINX_GLOBALS="load_module $PWD/target/ci/libngx_mzstd.so;"
+          prove -v -I nginx-tests/lib t/
+
+  asan:
+    name: AddressSanitizer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+
+      # The module uses the sanitizer runtime linked into nginx, which must come
+      # from the same LLVM release as rustc.
+      - name: Install clang matching rustc's LLVM
+        run: |
+          llvm=$(rustc -vV | sed -n 's/^LLVM version: \([0-9]*\).*/\1/p')
+          curl -sSfL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$llvm"
+          echo "CLANG=clang-$llvm" >> "$GITHUB_ENV"
+
+      # NGX_DEBUG_PALLOC gives every pool allocation its own malloc(), so that
+      # the sanitizer sees overflows of the buffers the module works with.
+      - uses: ./.github/actions/setup-nginx
+        with:
+          build: true
+          variant: asan-${{ env.CLANG }}
+          configure-args: >-
+            --with-cc=${{ env.CLANG }}
+            --with-cc-opt="-O1 -g -fsanitize=address -fno-omit-frame-pointer -DNGX_DEBUG_PALLOC=1"
+            --with-ld-opt=-fsanitize=address
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: asan
+
+      - name: Build module with AddressSanitizer
+        env:
+          CC: ${{ env.CLANG }}
+          CFLAGS: -fsanitize=address -fno-omit-frame-pointer
+          RUSTFLAGS: -Zsanitizer=address -Zexternal-clangrt -Cforce-frame-pointers=yes
+        run: |
+          target=$(rustc -vV | sed -n 's/^host: //p')
+          cargo build --profile ci -Zbuild-std --target "$target"
+          cp "target/$target/ci/libngx_mzstd.so" "$RUNNER_TEMP/"
+
+      - name: Check out nginx-tests
+        uses: actions/checkout@v7
+        with:
+          repository: nginx/nginx-tests
+          path: nginx-tests
+
+      - name: Install the zstd CLI
+        run: sudo apt-get install -y -qq --no-install-recommends zstd
+
+      # Sanitizer reports go to the error log, which every test file checks
+      # ("no sanitizer errors"); leak checking is on by default, except for
+      # what nginx itself leaks on worker exit (see .github/lsan.supp).
+      - name: Integration tests under AddressSanitizer
+        env:
+          TEST_NGINX_BINARY: ${{ env.NGINX_BINARY }}
+          ASAN_OPTIONS: detect_stack_use_after_return=1:detect_odr_violation=0
+          LSAN_OPTIONS: suppressions=${{ github.workspace }}/.github/lsan.supp
+          TEST_NGINX_LEAVE: 1
+        run: |
+          export TEST_NGINX_GLOBALS="load_module $RUNNER_TEMP/libngx_mzstd.so;"
+          prove -v -I nginx-tests/lib t/
+
+      # The tests print only the summary line of a report; the reports, with
+      # their stack traces, stay in the error logs the tests leave behind.
+      - name: Sanitizer reports
+        if: failure()
+        run: |
+          for log in /tmp/nginx-test-*/error.log; do
+            sed -n '/^==[0-9]*==ERROR/,/^SUMMARY/p' "$log"
+          done
+
+  miri:
+    name: miri
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri, rust-src
+      - uses: ./.github/actions/setup-nginx
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo miri setup
+      - run: cargo miri test

@@ -1,0 +1,39 @@
+name: Release
+
+# Sampo turns pending changesets (.sampo/changesets/*.md) into a "Release (main)"
+# pull request that bumps the version and updates CHANGELOG.md. Merging that pull
+# request tags the release and creates a GitHub Release from the changelog.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# This job can write to the repository, so every action is pinned to a commit
+# SHA; Dependabot keeps the pins current (.github/dependabot.yml).
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Changelog entries link commits and credit their authors.
+          fetch-depth: 0
+      # Sampo refreshes Cargo.lock after bumping the version.
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - name: Prepare release PR or publish
+        id: sampo
+        uses: bruits/sampo/crates/sampo-github-action@11306bad0caaa58c8a36fa203695c5f2cacc4344 # cargo-sampo-github-action-v0.20.0
+        with:
+          command: auto
+          create-github-release: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
