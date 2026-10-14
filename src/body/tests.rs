@@ -6,8 +6,7 @@
 //! - freed chain links are deallocated at once instead of being kept for reuse,
 //!   so a link used after `ngx_free_chain()` is a use-after-free;
 //! - output buffers are uninitialized, as `ngx_create_temp_buf()`'s are, so
-//!   giving the encoder a buffer the filter has not zeroed, or sending bytes
-//!   nobody wrote, is a read of uninitialized memory;
+//!   sending bytes the encoder never wrote is a read of uninitialized memory;
 //! - upstream frees each input buffer and every chain link it passes as soon
 //!   as the call returns and the buffer is drained, so holding on to either
 //!   is a use-after-free.
@@ -708,21 +707,55 @@ fn known_length_is_declared() {
     assert!(f.host().errors.borrow().is_empty());
 }
 
-#[test]
-fn a_length_that_does_not_match_fails() {
-    let body = text(2000);
-    let mut settings = settings(4, 4096);
-    settings.input_size = InputSize::Exact(body.len() as u64 + 1);
+/// A response whose body is not as long as its `Content-Length` said.
+fn mismatched_length(mut settings: Settings, declared: usize, parts: &[Part<'_>]) {
+    settings.input_size = InputSize::Exact(declared as u64);
     let mut f = BodyFilter::new(Model::new(None), settings);
     let mut up = Upstream::default();
 
-    assert_eq!(
-        up.send(&mut f, &[Part::Last(&body)]),
-        NGX_ERROR as ngx_int_t
-    );
+    let mut rc = OK;
+    for part in parts {
+        rc = up.send(&mut f, &[*part]);
+        if rc == NGX_ERROR as ngx_int_t {
+            break;
+        }
+        while !f.host().tasks.is_empty() {
+            rc = up.complete(&mut f);
+        }
+    }
+    assert_eq!(rc, NGX_ERROR as ngx_int_t);
     assert!(f.is_done());
     assert_eq!(f.sizes(), None);
+    assert_eq!(f.host().last, None, "the response was ended");
     assert_eq!(f.host().errors.borrow().len(), 1);
+}
+
+#[test]
+fn a_length_that_does_not_match_fails() {
+    let body = text(2000);
+    let len = body.len();
+    let serial = || settings(4, 4096);
+
+    // All of it in the first call, which ends the frame.
+    mismatched_length(serial(), len + 1, &[Part::Last(&body)]);
+    mismatched_length(serial(), len - 1, &[Part::Last(&body)]);
+    // In parts.
+    let parts = [Part::Data(&body[..500]), Part::Last(&body[500..])];
+    mismatched_length(serial(), len + 1, &parts);
+    mismatched_length(serial(), len - 1, &parts);
+
+    let mut parallel = settings(4, 4096);
+    parallel.parallel = Some(Parallel {
+        segment_size: SegmentSize::try_from(SEGMENT).unwrap(),
+        tasks: TaskCount::try_from(2).unwrap(),
+    });
+    let body = text(SEGMENT + 1000);
+    let len = body.len();
+    mismatched_length(parallel, len + 1, &[Part::Last(&body)]);
+    mismatched_length(parallel, len - 1, &[Part::Last(&body)]);
+    let parts = [Part::Data(&body[..SEGMENT]), Part::Last(&body[SEGMENT..])];
+    mismatched_length(parallel, len + 1, &parts);
+    mismatched_length(parallel, len - 1, &parts);
 }
 
 #[test]

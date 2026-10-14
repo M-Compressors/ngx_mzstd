@@ -12,6 +12,7 @@
 //! completes ([`BodyFilter::task_done`]).
 
 use core::fmt;
+use core::mem::MaybeUninit;
 use core::{ptr, slice};
 
 use mzstd::compressor::parallel::{
@@ -620,10 +621,6 @@ impl<H: Host> BodyFilter<H> {
         if b.is_null() {
             return Err(Failed);
         }
-        // mzstd's serial `process_uninit` goes through a zeroed scratch
-        // buffer on every call. Zeroed once here, a buffer stays initialized
-        // when it is recycled, so the encoders write into it in place.
-        unsafe { ptr::write_bytes((*b).start, 0, size) };
         self.out_buf = b;
         self.bufs += 1;
 
@@ -640,15 +637,15 @@ impl<H: Host> BodyFilter<H> {
         let room = room as usize;
         self.collect = false;
 
-        // Output buffers are zeroed when they are created (`get_buf`).
-        let output = unsafe { slice::from_raw_parts_mut(last, room) };
+        // Buffer memory is uninitialized until the encoder writes it.
+        let output = unsafe { slice::from_raw_parts_mut(last.cast::<MaybeUninit<u8>>(), room) };
         let outcome = match self.session.as_mut().ok_or(Failed)? {
             Session::Serial(session) => session
-                .process(input, output, self.operation)
+                .process_uninit(input, output, self.operation)
                 .map(Outcome::from)
                 .map_err(|err| err.to_string()),
             Session::Parallel { session, .. } => session
-                .process(input, output, self.operation)
+                .process_uninit(input, output, self.operation)
                 .map(Outcome::from)
                 .map_err(|err| err.to_string()),
         };
@@ -714,17 +711,6 @@ impl<H: Host> BodyFilter<H> {
 
             Status::Finished => {
                 self.redo = false;
-                // The frame header declares the length: a response that ends
-                // up shorter or longer would not decode.
-                if let InputSize::Exact(declared) = self.settings.input_size
-                    && declared != self.bytes_in
-                {
-                    self.host.error(format_args!(
-                        "zstd filter got {} bytes of a {declared}-byte response",
-                        self.bytes_in
-                    ));
-                    return Err(Failed);
-                }
                 let b = self.take_out_buf();
                 if b.is_null() {
                     return Err(Failed);

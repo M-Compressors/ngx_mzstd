@@ -147,7 +147,13 @@ my $js = "function f() { return 1; }\n" x 500;
 
 $t->write_file('index.html', $html);
 $t->write_file('app.js', $js);
-$t->write_file('big.html', join(' ', map { "w" . ($_ * 7919 % 100003) } 1 .. 400000));
+# Pseudo-random words, so that each segment takes long enough at level 22
+# for the client below to go away while they are being compressed.
+my $seed = 7;
+$t->write_file('big.html', join(' ', map {
+	$seed = ($seed * 1103515245 + 12345) % 2147483648;
+	'w' . ($seed >> 8) % 1000003
+} 1 .. 1000000));
 mkdir($t->testdir() . '/ssi');
 $t->write_file('ssi/page.html',
 	'<html><!--# include virtual="/app.js" -->|'
