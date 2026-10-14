@@ -1,5 +1,11 @@
 # ngx_mzstd
 
+## 0.1.1 — 2026-10-14
+
+### Patch changes
+
+- [935b72a](https://github.com/M-Compressors/ngx_mzstd/commit/935b72a808090cb61971c84a6346f3e46e4e7638) Update mzstd to 0.2.2. The encoder now writes straight into uninitialized output buffers, so each new `zstd_buffers` buffer is no longer zeroed first. A response whose body does not match its `Content-Length` is still aborted, now by the encoder itself. Output is unchanged. — Thanks @Mnwa!
+
 ## 0.1.0 — 2026-10-14
 
 ### Minor changes
