@@ -23,7 +23,7 @@ select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
 my $t = Test::Nginx->new()->has(qw/http proxy ssi --with-threads/)
-	->has_daemon('zstd')->plan(27)
+	->has_daemon('zstd')->plan(28)
 	->write_file_expand('nginx.conf', <<'EOF');
 
 %%TEST_GLOBALS%%
@@ -106,6 +106,13 @@ http {
             alias %%TESTDIR%%/;
             zstd_comp_level 22;
             zstd_parallel_segment_size 1m;
+        }
+
+        # Compressed in the event loop: the parallel compressor does not
+        # take dictionaries.
+        location /dict/ {
+            alias %%TESTDIR%%/;
+            zstd_dict_file %%TESTDIR%%/app.js;
         }
 
         location /proxy/ {
@@ -205,6 +212,9 @@ is(zstd_body($r), $html, 'small buffers, one task');
 $r = get('/l19/index.html', 'zstd');
 is(zstd_body($r), $html, 'comp level 19');
 
+$r = get('/dict/index.html', 'zstd');
+is(zstd_body($r, 'app.js'), $html, 'dictionary');
+
 $r = get('/proxy/index.html', 'zstd');
 is(zstd_body($r), $html, 'proxied');
 
@@ -297,7 +307,7 @@ EOF
 }
 
 sub zstd_body {
-	my ($r) = @_;
+	my ($r, $dict) = @_;
 	my $body = http_content($r);
 	return undef unless defined $body;
 
@@ -307,7 +317,8 @@ sub zstd_body {
 	print $fh $body;
 	close $fh;
 
-	return `zstd -dcq $file`;
+	my $opts = defined $dict ? "-D $testdir/$dict" : '';
+	return `zstd -dcq $opts $file`;
 }
 
 ###############################################################################

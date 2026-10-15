@@ -19,11 +19,16 @@ use Test::Nginx;
 select STDERR; $| = 1;
 select STDOUT; $| = 1;
 
-my $t = Test::Nginx->new()->has(qw/http/)->plan(41);
+my $t = Test::Nginx->new()->has(qw/http/)->plan(45);
 
 ###############################################################################
 
 my $ok = qr/test is successful/;
+
+# Dictionaries are read relative to the configuration prefix.
+$t->write_file('raw.dict', 'shared history of responses ' x 10);
+# The Zstandard dictionary magic number, ID 1 and a broken entropy section.
+$t->write_file('corrupted.dict', pack('VV', 0xEC30A437, 1) . "\xff\xff");
 
 # valid configurations
 
@@ -46,9 +51,10 @@ like(check($t, 'zstd_comp_level -5;'), $ok, 'negative level');
 like(check($t, 'zstd_comp_level -131072;'), $ok, 'fastest level');
 like(check($t, 'zstd_comp_level 22;'), $ok, 'strongest level');
 like(check($t, 'zstd_min_length 256 512;'), $ok, 'min length takes more arguments');
+like(check($t, 'zstd_dict_file raw.dict;'), $ok, 'dict file');
 like(check($t, 'zstd_dict_file /nonexistent/dict;'),
-	qr/"zstd_dict_file" is not supported and is ignored.*$ok/s,
-	'dict file is ignored');
+	qr/cannot read zstd dictionary "\/nonexistent\/dict"/,
+	'dict file does not exist');
 
 like(check($t, 'zstd_retention_policy aggressive;'), $ok, 'aggressive');
 like(check($t, 'zstd_retention_policy current_config;'), $ok, 'current_config');
@@ -57,6 +63,11 @@ like(check($t, 'zstd_retention_policy bounded 0;'), $ok, 'bounded 0');
 
 like(check($t, '', 'zstd_retention_policy release_all; zstd_reuse_memory on;'),
 	$ok, 'location level');
+
+like(check($t, '', 'zstd on; zstd_dict_file raw.dict;'), $ok,
+	'dict file in a location');
+like(check($t, 'zstd on; zstd_dict_file raw.dict;', 'zstd_dict_file off;'),
+	$ok, 'dict file off');
 
 like(check($t, 'zstd_idle_encoders 0;'), $ok, 'no idle encoders');
 
@@ -157,9 +168,13 @@ like(check($t, 'zstd_comp_level 3; zstd_comp_level -1;'),
 	qr/"zstd_comp_level" directive is duplicate/,
 	'duplicate comp level');
 
-like(check($t, '', 'zstd_dict_file /dict;'),
-	qr/"zstd_dict_file" directive is not allowed here/,
-	'dict file in a location');
+like(check($t, 'zstd_dict_file raw.dict; zstd_dict_file raw.dict;'),
+	qr/"zstd_dict_file" directive is duplicate/,
+	'duplicate dict file');
+
+like(check($t, 'zstd_dict_file corrupted.dict;'),
+	qr/invalid zstd dictionary ".*corrupted\.dict": .*corrupted/,
+	'corrupted dict file');
 
 like(check($t, 'zstd_static sometimes;'),
 	qr/invalid value "sometimes"/,

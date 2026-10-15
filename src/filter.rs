@@ -6,11 +6,19 @@
 //!
 //! With `zstd_thread_pool`, responses are encoded in segments on that NGINX
 //! thread pool (see [`threads`]).
+//!
+//! With `zstd_dict_file`, responses are compressed with a dictionary. Each file
+//! is read once, into the main configuration, and prepared once for each
+//! level and window that locations compress it with.
 
 use core::ffi::{c_char, c_void};
 use core::{fmt, ptr};
+use std::ffi::OsStr;
+use std::os::unix::ffi::OsStrExt;
+use std::sync::Arc;
 
 use mzstd::compressor::parallel::{OwnedParallelTask, SegmentSize, TaskCount};
+use mzstd::dictionary::{DictionaryBuilder, DictionaryError, PreparedDictionary};
 use mzstd::{CompressionParams, EncoderConfig, InputSize, Level};
 use ngx::core::{NGX_CONF_ERROR, NGX_CONF_OK, Pool};
 use ngx::ffi::{
@@ -18,17 +26,17 @@ use ngx::ffi::{
     NGX_HTTP_FORBIDDEN, NGX_HTTP_GZIP_BUFFERED, NGX_HTTP_LIF_CONF, NGX_HTTP_LOC_CONF,
     NGX_HTTP_LOC_CONF_OFFSET, NGX_HTTP_MAIN_CONF, NGX_HTTP_MAIN_CONF_OFFSET, NGX_HTTP_MODULE,
     NGX_HTTP_NOT_FOUND, NGX_HTTP_OK, NGX_HTTP_SRV_CONF, NGX_HTTP_VAR_NOCACHEABLE, NGX_LOG_ALERT,
-    NGX_LOG_EMERG, NGX_LOG_WARN, NGX_OK, ngx_alloc_chain_link, ngx_array_t, ngx_buf_t, ngx_bufs_t,
+    NGX_LOG_EMERG, NGX_OK, ngx_alloc_chain_link, ngx_array_t, ngx_buf_t, ngx_bufs_t,
     ngx_chain_add_copy, ngx_chain_t, ngx_chain_update_chains, ngx_command_t,
-    ngx_conf_check_num_bounds, ngx_conf_num_bounds_t, ngx_conf_post_t, ngx_conf_set_bufs_slot,
-    ngx_conf_set_flag_slot, ngx_conf_set_num_slot, ngx_conf_set_size_slot, ngx_conf_set_str_slot,
+    ngx_conf_check_num_bounds, ngx_conf_full_name, ngx_conf_num_bounds_t, ngx_conf_post_t,
+    ngx_conf_set_bufs_slot, ngx_conf_set_flag_slot, ngx_conf_set_num_slot, ngx_conf_set_size_slot,
     ngx_conf_t, ngx_create_temp_buf, ngx_cycle_t, ngx_flag_t, ngx_hash_t, ngx_http_add_variable,
     ngx_http_conf_ctx_t, ngx_http_html_default_types, ngx_http_merge_types, ngx_http_module,
     ngx_http_module_t, ngx_http_output_body_filter_pt, ngx_http_output_header_filter_pt,
     ngx_http_request_t, ngx_http_test_content_type, ngx_http_top_body_filter,
     ngx_http_top_header_filter, ngx_http_types_slot, ngx_http_variable_value_t, ngx_int_t,
-    ngx_list_push, ngx_log_t, ngx_module_t, ngx_pagesize, ngx_palloc, ngx_parse_size, ngx_pcalloc,
-    ngx_pnalloc, ngx_pool_t, ngx_str_t, ngx_table_elt_t, ngx_uint_t, off_t,
+    ngx_list_push, ngx_log_t, ngx_module_t, ngx_pagesize, ngx_parse_size, ngx_pcalloc, ngx_pnalloc,
+    ngx_pool_t, ngx_str_t, ngx_table_elt_t, ngx_uint_t, off_t,
 };
 use ngx::{ngx_conf_log_error, ngx_log_debug_mask, ngx_log_error, ngx_string};
 
@@ -73,19 +81,66 @@ const MAX_CACHED: ngx_int_t = 1024;
 #[cfg(ngx_feature = "threads")]
 mod threads;
 
-/// Main configuration: the limits of each worker's encoder caches.
+/// Main configuration: the limits of each worker's encoder caches, and the
+/// files of `zstd_dict_file`.
+///
+/// Allocated with [`Pool::allocate`], which drops it with the configuration.
 #[repr(C)]
 struct FilterMainConf {
     /// `zstd_idle_encoders`.
     idle_encoders: ngx_int_t,
     /// `zstd_parallel_compressors`.
     parallel_compressors: ngx_int_t,
-    /// `zstd_dict_file`, accepted and ignored.
-    dict_file: ngx_str_t,
+    /// Every file named by `zstd_dict_file`, once each.
+    dict_files: Vec<DictFile>,
+}
+
+/// A file of `zstd_dict_file`, and the dictionaries prepared from it.
+struct DictFile {
+    /// The full name.
+    path: Box<[u8]>,
+    bytes: Box<[u8]>,
+    /// One for each encoder configuration a location uses it with.
+    prepared: Vec<Arc<PreparedDictionary>>,
+}
+
+impl DictFile {
+    /// The dictionary prepared for `config`, prepared now if no location
+    /// has used that configuration yet.
+    fn prepare(
+        &mut self,
+        config: EncoderConfig,
+    ) -> Result<Arc<PreparedDictionary>, DictionaryError> {
+        if let Some(dictionary) = self.prepared.iter().find(|d| *d.config() == config) {
+            return Ok(Arc::clone(dictionary));
+        }
+        let dictionary = Arc::new(
+            DictionaryBuilder::new(&self.bytes)
+                .with_config(config)
+                .build()?,
+        );
+        self.prepared.push(Arc::clone(&dictionary));
+        Ok(dictionary)
+    }
+
+    fn name(&self) -> String {
+        String::from_utf8_lossy(&self.path).into_owned()
+    }
+}
+
+/// `zstd_dict_file` in a location.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum DictSetting {
+    Unset,
+    Off,
+    /// An index into [`FilterMainConf::dict_files`].
+    File(usize),
 }
 
 /// Location configuration. Field offsets are used by the stock NGINX slot
 /// setters, so the layout must stay `repr(C)`.
+///
+/// Allocated with [`Pool::allocate`], which drops it with the configuration.
 #[repr(C)]
 struct FilterConf {
     enable: ngx_flag_t,
@@ -102,6 +157,10 @@ struct FilterConf {
     thread_pool: *mut c_void,
     segment_size: usize,
     parallel_tasks: ngx_int_t,
+    dict: DictSetting,
+    /// The dictionary of `dict`, prepared for this location's level and window
+    /// when its configuration is merged, if compression is on.
+    dictionary: Option<Arc<PreparedDictionary>>,
 }
 
 static mut WINDOW_POST: ngx_conf_post_t = ngx_conf_post_t {
@@ -122,10 +181,6 @@ static mut PARALLEL_TASKS_BOUNDS: ngx_conf_num_bounds_t = ngx_conf_num_bounds_t 
     post_handler: Some(ngx_conf_check_num_bounds),
     low: 1,
     high: MAX_PARALLEL_TASKS,
-};
-
-static mut DICT_FILE_POST: ngx_conf_post_t = ngx_conf_post_t {
-    post_handler: Some(ignore_dict_file),
 };
 
 const ANY_CONF: u32 = NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF;
@@ -238,11 +293,11 @@ static mut COMMANDS: [ngx_command_t; 15] = [
     },
     ngx_command_t {
         name: ngx_string!("zstd_dict_file"),
-        type_: (NGX_HTTP_MAIN_CONF | NGX_CONF_TAKE1) as ngx_uint_t,
-        set: Some(ngx_conf_set_str_slot),
-        conf: NGX_HTTP_MAIN_CONF_OFFSET,
-        offset: core::mem::offset_of!(FilterMainConf, dict_file),
-        post: &raw mut DICT_FILE_POST as *mut c_void,
+        type_: (ANY_CONF | NGX_CONF_TAKE1) as ngx_uint_t,
+        set: Some(set_dict_file),
+        conf: NGX_HTTP_LOC_CONF_OFFSET,
+        offset: 0,
+        post: ptr::null_mut(),
     },
     ngx_command_t::empty(),
 ];
@@ -293,6 +348,14 @@ unsafe fn next_body_filter(r: *mut ngx_http_request_t, chain: *mut ngx_chain_t) 
 
 unsafe fn loc_conf<'a>(r: *mut ngx_http_request_t) -> &'a FilterConf {
     unsafe { &*(*(*r).loc_conf.add(module().ctx_index)).cast::<FilterConf>() }
+}
+
+/// The main configuration, while the `http` block is being read or merged.
+unsafe fn main_conf<'a>(cf: *mut ngx_conf_t) -> &'a mut FilterMainConf {
+    unsafe {
+        let ctx = (*cf).ctx.cast::<ngx_http_conf_ctx_t>();
+        &mut *(*(*ctx).main_conf.add(module().ctx_index)).cast::<FilterMainConf>()
+    }
 }
 
 type FilterCtx = BodyFilter<NginxHost>;
@@ -527,15 +590,7 @@ fn settings(
     conf: &FilterConf,
     content_length: off_t,
 ) -> Result<Settings, Box<dyn core::error::Error>> {
-    let level = Level::try_from(i32::try_from(conf.level)?)?;
-    let mut encoder = EncoderConfig::default().with_level(level);
-    // The window is set only when the level's own is larger, so that every
-    // other level compresses exactly as zstd does without one. A known length
-    // shrinks it further for a shorter response.
-    if conf.lg_win < usize::from(LEVEL_WINDOW_LOG[level.get().max(0) as usize]) {
-        encoder =
-            encoder.with_params(CompressionParams::default().with_window_log(conf.lg_win as u32));
-    }
+    let encoder = encoder_config(conf)?;
     let parallel = if conf.thread_pool.is_null() {
         None
     } else {
@@ -557,22 +612,34 @@ fn settings(
         bufs_num: conf.bufs.num as usize,
         bufs_size: conf.bufs.size,
         parallel,
+        dictionary: conf.dictionary.clone(),
     })
 }
 
-unsafe extern "C" fn create_main_conf(cf: *mut ngx_conf_t) -> *mut c_void {
-    let conf: *mut FilterMainConf =
-        unsafe { ngx_palloc((*cf).pool, size_of::<FilterMainConf>()) }.cast();
-    if !conf.is_null() {
-        unsafe {
-            conf.write(FilterMainConf {
-                idle_encoders: UNSET,
-                parallel_compressors: UNSET,
-                dict_file: ngx_str_t::default(),
-            })
-        };
+/// The encoder configuration of a merged location configuration.
+fn encoder_config(conf: &FilterConf) -> Result<EncoderConfig, Box<dyn core::error::Error>> {
+    let level = Level::try_from(i32::try_from(conf.level)?)?;
+    let encoder = EncoderConfig::default().with_level(level);
+    // The window is set only when the level's own is larger, so that every
+    // other level compresses exactly as zstd does without one. A known length
+    // shrinks it further for a shorter response.
+    if conf.lg_win < usize::from(LEVEL_WINDOW_LOG[level.get().max(0) as usize]) {
+        return Ok(
+            encoder.with_params(CompressionParams::default().with_window_log(conf.lg_win as u32))
+        );
     }
-    conf.cast()
+    Ok(encoder)
+}
+
+unsafe extern "C" fn create_main_conf(cf: *mut ngx_conf_t) -> *mut c_void {
+    let conf = FilterMainConf {
+        idle_encoders: UNSET,
+        parallel_compressors: UNSET,
+        dict_files: Vec::new(),
+    };
+    unsafe { Pool::from_ngx_pool((*cf).pool) }
+        .allocate(conf)
+        .cast()
 }
 
 unsafe extern "C" fn init_main_conf(_cf: *mut ngx_conf_t, conf: *mut c_void) -> *mut c_char {
@@ -605,26 +672,25 @@ unsafe extern "C" fn init_process(cycle: *mut ngx_cycle_t) -> ngx_int_t {
 }
 
 unsafe extern "C" fn create_conf(cf: *mut ngx_conf_t) -> *mut c_void {
-    let conf: *mut FilterConf = unsafe { ngx_palloc((*cf).pool, size_of::<FilterConf>()) }.cast();
-    if !conf.is_null() {
-        unsafe {
-            conf.write(FilterConf {
-                enable: UNSET,
-                types: core::mem::zeroed(),
-                types_keys: ptr::null_mut(),
-                min_length: UNSET,
-                bufs: ngx_bufs_t { num: 0, size: 0 },
-                level: UNSET_LEVEL,
-                lg_win: UNSET_SIZE,
-                reuse_memory: UNSET,
-                retention: None,
-                thread_pool: UNSET_PTR,
-                segment_size: UNSET_SIZE,
-                parallel_tasks: UNSET,
-            })
-        };
-    }
-    conf.cast()
+    let conf = FilterConf {
+        enable: UNSET,
+        types: unsafe { core::mem::zeroed() },
+        types_keys: ptr::null_mut(),
+        min_length: UNSET,
+        bufs: ngx_bufs_t { num: 0, size: 0 },
+        level: UNSET_LEVEL,
+        lg_win: UNSET_SIZE,
+        reuse_memory: UNSET,
+        retention: None,
+        thread_pool: UNSET_PTR,
+        segment_size: UNSET_SIZE,
+        parallel_tasks: UNSET,
+        dict: DictSetting::Unset,
+        dictionary: None,
+    };
+    unsafe { Pool::from_ngx_pool((*cf).pool) }
+        .allocate(conf)
+        .cast()
 }
 
 unsafe extern "C" fn merge_conf(
@@ -690,6 +756,97 @@ unsafe extern "C" fn merge_conf(
         return NGX_CONF_ERROR;
     }
 
+    merge(
+        &mut conf.dict,
+        prev.dict,
+        DictSetting::Unset,
+        DictSetting::Off,
+    );
+    if let DictSetting::File(index) = conf.dict
+        && conf.enable != 0
+    {
+        let file = &mut unsafe { main_conf(cf) }.dict_files[index];
+        let dictionary = encoder_config(conf).and_then(|config| Ok(file.prepare(config)?));
+        match dictionary {
+            Ok(dictionary) => conf.dictionary = Some(dictionary),
+            Err(err) => {
+                ngx_conf_log_error!(
+                    NGX_LOG_EMERG,
+                    cf,
+                    "cannot prepare zstd dictionary \"{}\" for level {}: {err}",
+                    file.name(),
+                    conf.level
+                );
+                return NGX_CONF_ERROR;
+            }
+        }
+    }
+
+    NGX_CONF_OK
+}
+
+/// `zstd_dict_file <path> | off`: the file is read here, once for every
+/// location that names it, and checked.
+unsafe extern "C" fn set_dict_file(
+    cf: *mut ngx_conf_t,
+    _cmd: *mut ngx_command_t,
+    conf: *mut c_void,
+) -> *mut c_char {
+    let conf = unsafe { &mut *conf.cast::<FilterConf>() };
+    if conf.dict != DictSetting::Unset {
+        return c"is duplicate".as_ptr().cast_mut();
+    }
+
+    let args: &mut [ngx_str_t] = unsafe { (*(*cf).args).as_slice_mut() };
+    let [_, name] = args else {
+        return NGX_CONF_ERROR;
+    };
+
+    if name.as_bytes() == b"off" {
+        conf.dict = DictSetting::Off;
+        return NGX_CONF_OK;
+    }
+
+    // Relative to the configuration prefix, as tokers/zstd-nginx-module does.
+    if unsafe { ngx_conf_full_name((*cf).cycle, name, 1) } != NGX_OK as ngx_int_t {
+        return NGX_CONF_ERROR;
+    }
+
+    let files = &mut unsafe { main_conf(cf) }.dict_files;
+    let index = match files.iter().position(|f| *f.path == *name.as_bytes()) {
+        Some(index) => index,
+        None => {
+            let bytes = match std::fs::read(OsStr::from_bytes(name.as_bytes())) {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    ngx_conf_log_error!(
+                        NGX_LOG_EMERG,
+                        cf,
+                        "cannot read zstd dictionary \"{name}\": {err}"
+                    );
+                    return NGX_CONF_ERROR;
+                }
+            };
+            // A malformed dictionary is reported here rather than where a
+            // location first uses it.
+            if let Err(err) = DictionaryBuilder::new(&bytes).build() {
+                ngx_conf_log_error!(
+                    NGX_LOG_EMERG,
+                    cf,
+                    "invalid zstd dictionary \"{name}\": {err}"
+                );
+                return NGX_CONF_ERROR;
+            }
+            files.push(DictFile {
+                path: name.as_bytes().into(),
+                bytes: bytes.into(),
+                prepared: Vec::new(),
+            });
+            files.len() - 1
+        }
+    };
+
+    conf.dict = DictSetting::File(index);
     NGX_CONF_OK
 }
 
@@ -902,23 +1059,6 @@ fn parse_level(value: &[u8]) -> Option<i32> {
     }
     let magnitude: i32 = core::str::from_utf8(digits).ok()?.parse().ok()?;
     Some(if negative { -magnitude } else { magnitude })
-}
-
-/// `zstd_dict_file <path>`: compression with a dictionary is not supported.
-/// A response compressed without one decodes with or without the dictionary,
-/// so configurations that set it keep working.
-unsafe extern "C" fn ignore_dict_file(
-    cf: *mut ngx_conf_t,
-    _post: *mut c_void,
-    _data: *mut c_void,
-) -> *mut c_char {
-    ngx_conf_log_error!(
-        NGX_LOG_WARN,
-        cf,
-        "\"zstd_dict_file\" is not supported and is ignored: \
-         responses are compressed without a dictionary"
-    );
-    NGX_CONF_OK
 }
 
 unsafe extern "C" fn add_variables(cf: *mut ngx_conf_t) -> ngx_int_t {

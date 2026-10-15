@@ -10,17 +10,24 @@
 //! filter posts to the thread pool. Completed segments are collected by the
 //! next call of the filter, so the host calls it again whenever a task
 //! completes ([`BodyFilter::task_done`]).
+//!
+//! With `zstd_dict_file`, the response is encoded by a serial session with the
+//! dictionary, also when `zstd_thread_pool` is set: mzstd's parallel
+//! compressor does not take dictionaries.
 
 use core::fmt;
 use core::mem::MaybeUninit;
 use core::{ptr, slice};
+use std::sync::Arc;
 
 use mzstd::compressor::parallel::{
     OwnedParallelTask, ParallelConfig, ParallelEncoderSessionOwned, ParallelEncoderStatus,
     ParallelProgress, ParallelTaskQueue, SegmentSize, TaskCount,
 };
+use mzstd::dictionary::PreparedDictionary;
 use mzstd::{
-    EncoderConfig, EncoderSessionOwned, EncoderStatus, InputSize, Operation, Progress, StreamConfig,
+    Compressor, EncoderConfig, EncoderSessionOwned, EncoderStatus, InputSize, Operation, Progress,
+    StreamConfig,
 };
 use ngx::ffi::{NGX_AGAIN, NGX_ERROR, NGX_OK, ngx_buf_t, ngx_chain_t, ngx_int_t};
 
@@ -125,7 +132,7 @@ pub trait Host {
 }
 
 /// What the filter needs from the location configuration.
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct Settings {
     pub encoder: EncoderConfig,
     pub input_size: InputSize,
@@ -134,8 +141,10 @@ pub struct Settings {
     /// `zstd_buffers`.
     pub bufs_num: usize,
     pub bufs_size: usize,
-    /// Set when `zstd_thread_pool` is.
+    /// Set when `zstd_thread_pool` is. Not used with a dictionary.
     pub parallel: Option<Parallel>,
+    /// `zstd_dict_file`, prepared for `encoder`.
+    pub dictionary: Option<Arc<PreparedDictionary>>,
 }
 
 /// How a response is split up for the thread pool.
@@ -164,7 +173,11 @@ enum Step {
 
 /// The encoder of one response.
 enum Session {
-    Serial(EncoderSessionOwned),
+    /// Boxed: its type has room for a dictionary of its own, which takes
+    /// kilobytes even when there is none.
+    Serial(Box<EncoderSessionOwned>),
+    /// A serial session with `zstd_dict_file`.
+    Dictionary(EncoderSessionOwned<Arc<PreparedDictionary>>),
     Parallel {
         /// Boxed: it is far larger than a serial session.
         session: Box<ParallelEncoderSessionOwned>,
@@ -383,6 +396,9 @@ impl<H: Host> BodyFilter<H> {
             Session::Serial(session) => {
                 encoder_pool::release(session.into_compressor(), retention);
             }
+            Session::Dictionary(session) => {
+                encoder_pool::release(session.into_compressor(), retention);
+            }
             Session::Parallel {
                 session,
                 lease: Some(lease),
@@ -476,22 +492,28 @@ impl<H: Host> BodyFilter<H> {
             parallel,
             ..
         } = self.settings;
+        let stream = StreamConfig::from(input_size);
 
-        let session = match parallel {
-            None => {
-                let compressor = if reuse_memory {
-                    encoder_pool::acquire(encoder, retention)
-                } else {
-                    encoder_pool::build(encoder, retention)
-                };
-                let compressor = compressor.map_err(|err| self.config_error(&err))?;
-                Session::Serial(compressor.into_session(StreamConfig::from(input_size)))
+        let session = match (self.settings.dictionary.clone(), parallel) {
+            (Some(dictionary), _) => {
+                let session = self
+                    .serial_compressor()?
+                    .into_session_with_dictionary(dictionary, stream)
+                    .map_err(|err| self.config_error(&err))?;
+                Session::Dictionary(session)
             }
 
-            Some(Parallel {
-                segment_size,
-                tasks,
-            }) => {
+            (None, None) => {
+                Session::Serial(Box::new(self.serial_compressor()?.into_session(stream)))
+            }
+
+            (
+                None,
+                Some(Parallel {
+                    segment_size,
+                    tasks,
+                }),
+            ) => {
                 let config = ParallelConfig::default().with_segment_size(segment_size);
                 let compressor = if reuse_memory {
                     encoder_pool::acquire_parallel(encoder, config)
@@ -501,8 +523,7 @@ impl<H: Host> BodyFilter<H> {
                         .map(|compressor| (compressor, None))
                 };
                 let (compressor, lease) = compressor.map_err(|err| self.config_error(&err))?;
-                let (session, queue) =
-                    compressor.into_session(StreamConfig::from(input_size), tasks);
+                let (session, queue) = compressor.into_session(stream, tasks);
                 Session::Parallel {
                     session: Box::new(session),
                     queue,
@@ -510,19 +531,43 @@ impl<H: Host> BodyFilter<H> {
                 }
             }
         };
+        // A dictionary takes precedence over the thread pool.
+        let parallel = parallel.filter(|_| matches!(session, Session::Parallel { .. }));
         self.session = Some(session);
 
         self.host.debug(format_args!(
-            "zstd encoder initialized: lvl:{} wlog:{:?} size:{:?} reuse:{} retention:{:?} parallel:{:?}",
+            "zstd encoder initialized: lvl:{} wlog:{:?} size:{:?} reuse:{} retention:{:?} \
+             parallel:{:?} dict:{:?}",
             encoder.level(),
             encoder.params().window_log(),
             input_size,
             reuse_memory,
             retention,
-            parallel
+            parallel,
+            self.settings
+                .dictionary
+                .as_ref()
+                .map(|dictionary| dictionary.id().map_or(0, u32::from))
         ));
 
         Ok(())
+    }
+
+    /// A compressor for a serial session, from the cache if `zstd_reuse_memory`
+    /// is on.
+    fn serial_compressor(&self) -> Result<Compressor, Failed> {
+        let Settings {
+            encoder,
+            reuse_memory,
+            retention,
+            ..
+        } = self.settings;
+        let compressor = if reuse_memory {
+            encoder_pool::acquire(encoder, retention)
+        } else {
+            encoder_pool::build(encoder, retention)
+        };
+        compressor.map_err(|err| self.config_error(&err))
     }
 
     fn config_error(&self, err: &dyn fmt::Display) -> Failed {
@@ -641,6 +686,10 @@ impl<H: Host> BodyFilter<H> {
         let output = unsafe { slice::from_raw_parts_mut(last.cast::<MaybeUninit<u8>>(), room) };
         let outcome = match self.session.as_mut().ok_or(Failed)? {
             Session::Serial(session) => session
+                .process_uninit(input, output, self.operation)
+                .map(Outcome::from)
+                .map_err(|err| err.to_string()),
+            Session::Dictionary(session) => session
                 .process_uninit(input, output, self.operation)
                 .map(Outcome::from)
                 .map_err(|err| err.to_string()),

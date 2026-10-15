@@ -27,6 +27,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
 use mzstd::compressor::parallel::{OwnedParallelTask, SegmentSize, TaskCount};
+use mzstd::dictionary::{DictionaryBuilder, PreparedDictionary};
 use mzstd::{DecodeOperation, DecoderStatus, Decompressor, EncoderConfig, InputSize, Level};
 use ngx::ffi::{NGX_AGAIN, NGX_ERROR, NGX_OK, ngx_buf_t, ngx_chain_t, ngx_int_t, off_t};
 
@@ -509,6 +510,7 @@ fn settings(bufs_num: usize, bufs_size: usize) -> Settings {
         bufs_num,
         bufs_size,
         parallel: None,
+        dictionary: None,
     }
 }
 
@@ -751,10 +753,10 @@ fn a_length_that_does_not_match_fails() {
     });
     let body = text(SEGMENT + 1000);
     let len = body.len();
-    mismatched_length(parallel, len + 1, &[Part::Last(&body)]);
-    mismatched_length(parallel, len - 1, &[Part::Last(&body)]);
+    mismatched_length(parallel.clone(), len + 1, &[Part::Last(&body)]);
+    mismatched_length(parallel.clone(), len - 1, &[Part::Last(&body)]);
     let parts = [Part::Data(&body[..SEGMENT]), Part::Last(&body[SEGMENT..])];
-    mismatched_length(parallel, len + 1, &parts);
+    mismatched_length(parallel.clone(), len + 1, &parts);
     mismatched_length(parallel, len - 1, &parts);
 }
 
@@ -974,4 +976,107 @@ fn parallel_tasks_on_threads() {
     assert_eq!(model.posted, 4);
     assert!(!model.buffered && !model.blocked);
     assert!(model.errors.borrow().is_empty());
+}
+
+/// Raw-content dictionary of the same text the tests send, prepared for
+/// `settings`, as `zstd_dict_file` prepares it for a location.
+fn dictionary(settings: &Settings) -> Arc<PreparedDictionary> {
+    let bytes = text(2048);
+    let dictionary = DictionaryBuilder::new(&bytes)
+        .with_config(settings.encoder)
+        .build()
+        .unwrap();
+    Arc::new(dictionary)
+}
+
+fn decode_with(dictionary: &PreparedDictionary, stream: &[u8]) -> Vec<u8> {
+    Decompressor::default()
+        .decompress_with_dictionary(dictionary, stream)
+        .unwrap()
+}
+
+/// Sends `body` in one call and returns what the client received.
+fn compress_once(settings: Settings, body: &[u8]) -> Vec<u8> {
+    let mut f = BodyFilter::new(Model::new(None), settings);
+    let mut up = Upstream::default();
+    assert_eq!(up.send(&mut f, &[Part::Last(body)]), OK);
+    assert!(f.host().errors.borrow().is_empty());
+    f.host().sent.clone()
+}
+
+#[test]
+fn dictionary_round_trip() {
+    let (a, b) = (text(1200), text(300));
+    let mut settings = settings(4, 4096);
+    let dict = dictionary(&settings);
+    settings.dictionary = Some(Arc::clone(&dict));
+    let mut f = BodyFilter::new(Model::new(None), settings.clone());
+    let mut up = Upstream::default();
+
+    assert_eq!(up.send(&mut f, &[Part::Flush(&a)]), OK);
+    assert_eq!(up.send(&mut f, &[Part::Last(&b)]), OK);
+
+    let model = f.host();
+    let body = [a, b].concat();
+    assert!(f.is_done());
+    assert_eq!(decode_with(&dict, &model.sent), body);
+    assert!(model.flushes[0] < model.sent.len());
+    assert!(model.errors.borrow().is_empty());
+    // The frame refers to the dictionary, which decoders need.
+    assert!(Decompressor::default().decompress(&model.sent).is_err());
+
+    settings.dictionary = None;
+    assert!(model.sent.len() < compress_once(settings, &body).len());
+}
+
+#[test]
+fn dictionary_takes_precedence_over_the_thread_pool() {
+    let body = text(SEGMENT + 1000);
+    let mut settings = settings(4, 4096);
+    settings.parallel = Some(Parallel {
+        segment_size: SegmentSize::try_from(SEGMENT).unwrap(),
+        tasks: TaskCount::try_from(2).unwrap(),
+    });
+    let dict = dictionary(&settings);
+    settings.dictionary = Some(Arc::clone(&dict));
+
+    let sent = compress_once(settings, &body);
+    assert_eq!(decode_with(&dict, &sent), body);
+}
+
+#[test]
+fn encoders_reused_after_a_dictionary_compress_as_new_ones() {
+    let body = text(2000);
+    let mut fresh = settings(4, 4096);
+    fresh.reuse_memory = false;
+    let expected = compress_once(fresh, &body);
+
+    for _ in 0..2 {
+        let mut with_dictionary = settings(4, 4096);
+        with_dictionary.dictionary = Some(dictionary(&with_dictionary));
+        compress_once(with_dictionary, &body);
+        assert_eq!(compress_once(settings(4, 4096), &body), expected);
+    }
+}
+
+#[test]
+fn a_dictionary_for_another_configuration_fails() {
+    let mut settings = settings(4, 4096);
+    let mut other = settings.clone();
+    other.encoder = other.encoder.with_level(Level::try_from(9).unwrap());
+    settings.dictionary = Some(dictionary(&other));
+    let mut f = BodyFilter::new(Model::new(None), settings);
+    let mut up = Upstream::default();
+
+    assert_eq!(
+        up.send(&mut f, &[Part::Last(&text(100))]),
+        NGX_ERROR as ngx_int_t
+    );
+    assert!(f.is_done());
+    let errors = f.host().errors.borrow();
+    assert_eq!(errors.len(), 1);
+    assert!(
+        errors[0].starts_with("zstd encoder config failed"),
+        "{errors:?}"
+    );
 }

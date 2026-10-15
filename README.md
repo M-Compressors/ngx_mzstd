@@ -180,13 +180,35 @@ only from the `Content-Length` response header.
 
 ### `zstd_dict_file`
 
-- **syntax**: `zstd_dict_file /path/to/dict`
-- **default**: —
-- **context**: `http`
+- **syntax**: `zstd_dict_file /path/to/dict | off`
+- **default**: `off`
+- **context**: `http`, `server`, `location`
 
-Accepted for compatibility and ignored, with a warning: compression with a
-dictionary is not supported. Responses are compressed without one, which any
-client decodes, whether it has the dictionary or not.
+Compresses responses with the dictionary in the file. A relative path is
+taken relative to the directory of `nginx.conf`. Both kinds of dictionary
+that zstd reads are accepted: one in the Zstandard format, such as
+`zstd --train` produces, whose ID each frame names, and raw content, any file
+without the dictionary magic number, which the frames do not name.
+
+**Only clients that already have the dictionary can decode these responses.**
+They are sent with `Content-Encoding: zstd`, as with tokers/zstd-nginx-module,
+and nothing in the response tells a client which dictionary it needs; browsers
+do not have it and fail to decode them. Use it only for clients you control.
+Compression dictionary transport ([RFC 9842](https://www.rfc-editor.org/rfc/rfc9842),
+`Content-Encoding: dcz`) is not supported.
+
+The file is read once, when the configuration is loaded, and a malformed
+Zstandard dictionary is rejected there. It is prepared once for each
+`zstd_comp_level` and `zstd_window` that locations with `zstd on` use it with,
+and the prepared copies are shared by all such locations. With `off`, a
+location inherits no dictionary.
+
+A dictionary helps most with short responses that resemble it, such as small
+JSON documents; on long ones the gain is small. Responses compressed with a
+dictionary are compressed in the event loop even with `zstd_thread_pool`:
+the parallel compressor does not take dictionaries.
+
+*In tokers/zstd-nginx-module it is only allowed in `http` and has no `off`.*
 
 ### `zstd_reuse_memory`
 
@@ -377,7 +399,9 @@ compression on the fly; clients that accept only Brotli or gzip get those.
   `zstd`, such as `zstdx`.
 - **`zstd_comp_level -1` works.** The C module takes -1 for "unset" and
   compresses at level 1 instead.
-- **`zstd_dict_file` is ignored**, with a warning (see above).
+- **`zstd_dict_file` can be set per server and location**, and turned off
+  with `off`. A Zstandard-format dictionary is checked when the configuration
+  is loaded.
 - **Encoders are reused** by default (`zstd_reuse_memory`), each keeping all
   of its working memory between responses (`zstd_retention_policy`). Set
   `zstd_reuse_memory off` to allocate per response as the C module does.
