@@ -356,7 +356,7 @@ dependencies = [
 
 [[package]]
 name = "ngx_mzstd"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "cc",
  "mzstd",
