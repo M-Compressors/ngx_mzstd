@@ -1,5 +1,11 @@
 # ngx_mzstd
 
+## 0.2.2 — 2026-10-18
+
+### Patch changes
+
+- Bump zstd with perf optimizations
+
 ## 0.2.1 — 2026-10-15
 
 ### Patch changes
