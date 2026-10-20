@@ -87,29 +87,30 @@ Debian, Ubuntu, RHEL-compatible (the default AppStream nginx) and the current
 Fedora releases, where that nginx is 1.25.4 or newer, the oldest version the
 module builds against: today Debian 13, Ubuntu 26.04, RHEL 10 and Fedora.
 
-Add the repository on Debian or Ubuntu:
+### Add the repository on Debian or Ubuntu:
 
 ```sh
 curl -1sLf 'https://dl.cloudsmith.io/public/m-compressors/ngx_mzstd/setup.deb.sh' | sudo -E bash
 ```
 
-On RHEL, AlmaLinux, Rocky Linux, Amazon Linux or Fedora:
+### On RHEL, CentOS, AlmaLinux, Rocky Linux, Amazon Linux or Fedora:
 
 ```sh
 curl -1sLf 'https://dl.cloudsmith.io/public/m-compressors/ngx_mzstd/setup.rpm.sh' | sudo -E bash
 ```
 
-For nginx.org mainline, add `ngx_mzstd-mainline` instead:
+### For nginx.org mainline, add `ngx_mzstd-mainline` instead:
 
 ```sh
 curl -1sLf 'https://dl.cloudsmith.io/public/m-compressors/ngx_mzstd-mainline/setup.deb.sh' | sudo -E bash
 curl -1sLf 'https://dl.cloudsmith.io/public/m-compressors/ngx_mzstd-mainline/setup.rpm.sh' | sudo -E bash
 ```
 
-### With nginx.org's nginx
+#### With nginx.org's nginx
 
 ```sh
-sudo apt-get install nginx-module-mzstd   # or: sudo dnf install nginx-module-mzstd
+sudo apt-get install nginx-module-mzstd # Debian, Ubuntu
+sudo dnf install nginx-module-mzstd # RHEL-compatible, Fedora
 ```
 
 Like nginx.org's own `nginx-module-*` packages, it installs the module without
@@ -124,7 +125,7 @@ The package requires the exact nginx package it was built for, so upgrade both
 together. Its version is `<nginx version>+<module version>`, as with nginx.org's
 module packages.
 
-### With the distribution's nginx
+#### With the distribution's nginx
 
 ```sh
 sudo apt-get install libnginx-mod-http-mzstd   # Debian, Ubuntu
