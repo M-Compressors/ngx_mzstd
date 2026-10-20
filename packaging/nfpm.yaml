@@ -1,0 +1,72 @@
+# nfpm configuration for every package of the module, deb and rpm, for
+# nginx.org's nginx and for the distributions' own. .github/scripts/package-build.sh
+# sets the variables below and runs nfpm in a staging directory that holds:
+#
+#   ngx_mzstd.so, LICENSE, CHANGELOG.md
+#   scripts/      postinstall, preremove and postremove, from
+#                 packaging/scripts/<group>/<format>/
+#   tree/         files laid out from the root, for the packages that ship
+#                 more than the module, such as a load_module snippet
+#
+# nfpm does not expand variables in script paths or in a file's presence,
+# hence the staging directory.
+
+name: ${PKG_NAME}
+version: ${PKG_VERSION}
+# Taken verbatim: as semver, "1.30.6+0.2.2" would lose its "+0.2.2".
+version_schema: none
+release: ${PKG_RELEASE}
+arch: ${PKG_ARCH}
+platform: linux
+section: httpd
+priority: optional
+maintainer: ${PKG_MAINTAINER}
+vendor: M-Compressors
+homepage: https://github.com/M-Compressors/ngx_mzstd
+license: MIT
+description: ${PKG_DESCRIPTION}
+
+depends:
+  - ${PKG_DEPENDS}
+# Empty entries are dropped.
+conflicts:
+  - ${PKG_CONFLICTS}
+
+contents:
+  - src: ./ngx_mzstd.so
+    dst: ${NGINX_MODULES_PATH}/ngx_mzstd.so
+    expand: true
+    file_info:
+      mode: 0755
+
+  - src: ./tree
+    dst: /
+    type: tree
+
+  - src: ./CHANGELOG.md
+    dst: /usr/share/doc/${PKG_NAME}/CHANGELOG.md
+    expand: true
+    packager: deb
+  - src: ./LICENSE
+    dst: /usr/share/doc/${PKG_NAME}/copyright
+    expand: true
+    packager: deb
+
+  - src: ./CHANGELOG.md
+    dst: /usr/share/doc/${PKG_NAME}/CHANGELOG.md
+    type: doc
+    expand: true
+    packager: rpm
+  - src: ./LICENSE
+    dst: /usr/share/licenses/${PKG_NAME}/LICENSE
+    type: license
+    expand: true
+    packager: rpm
+
+scripts:
+  postinstall: ./scripts/postinstall
+  preremove: ./scripts/preremove
+  postremove: ./scripts/postremove
+
+rpm:
+  summary: Zstandard compression for NGINX

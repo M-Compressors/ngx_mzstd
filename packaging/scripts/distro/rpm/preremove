@@ -1,0 +1,2 @@
+#!/bin/sh
+# Nothing to do: nginx keeps running with the module it has loaded.

@@ -66,6 +66,84 @@ Without `zstd_thread_pool` the module compresses in the event loop, as
 tokers/zstd-nginx-module does. See [Configuration directives](#configuration-directives)
 for every directive.
 
+## Installation from packages
+
+Prebuilt packages for amd64 and arm64 are published to
+[Cloudsmith](https://cloudsmith.io/~m-compressors/repos/), each built and tested
+against the exact nginx package it is for. Add the repository, then install the
+package that matches your nginx:
+
+| Your nginx | Repository | Package | Enabled on install |
+|---|---|---|---|
+| nginx.org stable | `ngx_mzstd` | `nginx-module-mzstd` | no |
+| nginx.org mainline | `ngx_mzstd-mainline` | `nginx-module-mzstd` | no |
+| Debian's or Ubuntu's own | `ngx_mzstd` | `libnginx-mod-http-mzstd` | yes |
+| RHEL-compatible or Fedora's own | `ngx_mzstd` | `nginx-mod-mzstd` | yes |
+
+Packages for nginx.org's nginx are built for every distribution release that
+nginx.org currently packages (Debian, Ubuntu, RHEL 8 to 10 and compatible,
+Amazon Linux 2023). Packages for the distributions' own nginx are built for
+Debian, Ubuntu, RHEL-compatible (the default AppStream nginx) and the current
+Fedora releases, where that nginx is 1.25.4 or newer, the oldest version the
+module builds against: today Debian 13, Ubuntu 26.04, RHEL 10 and Fedora.
+
+Add the repository on Debian or Ubuntu:
+
+```sh
+curl -1sLf 'https://dl.cloudsmith.io/public/m-compressors/ngx_mzstd/setup.deb.sh' | sudo -E bash
+```
+
+On RHEL, AlmaLinux, Rocky Linux, Amazon Linux or Fedora:
+
+```sh
+curl -1sLf 'https://dl.cloudsmith.io/public/m-compressors/ngx_mzstd/setup.rpm.sh' | sudo -E bash
+```
+
+For nginx.org mainline, add `ngx_mzstd-mainline` instead:
+
+```sh
+curl -1sLf 'https://dl.cloudsmith.io/public/m-compressors/ngx_mzstd-mainline/setup.deb.sh' | sudo -E bash
+curl -1sLf 'https://dl.cloudsmith.io/public/m-compressors/ngx_mzstd-mainline/setup.rpm.sh' | sudo -E bash
+```
+
+### With nginx.org's nginx
+
+```sh
+sudo apt-get install nginx-module-mzstd   # or: sudo dnf install nginx-module-mzstd
+```
+
+Like nginx.org's own `nginx-module-*` packages, it installs the module without
+enabling it. Add this line to the top of `/etc/nginx/nginx.conf` and reload
+nginx:
+
+```nginx
+load_module modules/ngx_mzstd.so;
+```
+
+The package requires the exact nginx package it was built for, so upgrade both
+together. Its version is `<nginx version>+<module version>`, as with nginx.org's
+module packages.
+
+### With the distribution's nginx
+
+```sh
+sudo apt-get install libnginx-mod-http-mzstd   # Debian, Ubuntu
+sudo dnf install nginx-mod-mzstd               # RHEL-compatible, Fedora
+```
+
+As with the distribution's own module packages, the module is enabled on
+installation: by `/etc/nginx/modules-enabled/50-mod-http-mzstd.conf` on Debian
+and Ubuntu, and `/usr/share/nginx/modules/mod-mzstd.conf` on RHEL and Fedora.
+Configure `zstd` (see [Configuration directives](#configuration-directives)) and
+reload nginx.
+
+The packages conflict with those of tokers/zstd-nginx-module
+(`nginx-module-zstd`, and the distribution's own where it has one), which
+provide the same directives. They are built and published by the
+[Publish workflow](.github/workflows/publish.yml).
+
+Package repository hosting is graciously provided by [Cloudsmith](https://cloudsmith.com).
+
 ## Building
 
 Requirements:
@@ -489,6 +567,17 @@ entry. The crate is not published to crates.io.
 
 For the workflow to open pull requests, enable *Settings → Actions → General →
 Allow GitHub Actions to create and approve pull requests*.
+
+Packages are published by hand: run the **Publish** workflow
+(`.github/workflows/publish.yml`) on the release tag. It builds a package for
+every target, tests each in a clean container of its distribution (install,
+`nginx -t`, a zstd-compressed response with and without a thread pool,
+removal), and pushes them to Cloudsmith only if all of them pass. With
+`dry_run` it builds and tests without pushing, also from a branch. A rerun on
+the same tag skips the packages already published. Targets come from nginx.org
+and the distributions at run time (`.github/scripts/publish-matrix.py`, which
+also says how to add a distribution); `nginx_stable` and `nginx_mainline`
+override the nginx.org versions.
 
 ## License
 

@@ -1,0 +1,26 @@
+#!/bin/sh
+# libnginx-mod-http-mzstd: enables the module as dh_nginx does for the
+# distribution's libnginx-mod-* packages, by linking its snippet into
+# /etc/nginx/modules-enabled, which nginx.conf includes. A link that the
+# admin removed stays removed on upgrades.
+set -e
+
+conf=/usr/share/nginx/modules-available/mod-http-mzstd.conf
+link=/etc/nginx/modules-enabled/50-mod-http-mzstd.conf
+
+if [ -L "$link.removed" ]; then
+	rm "$link.removed"
+	removed_link=true
+else
+	removed_link=false
+fi
+
+# Link on fresh installations, and on reinstallations after an automatic
+# removal (preremove), but not on upgrades.
+if [ -z "$2" ] || [ "$removed_link" = true ]; then
+	ln -sf "$conf" "$link"
+fi
+
+if [ "$1" = configure ] && command -v dpkg-trigger >/dev/null; then
+	dpkg-trigger --no-await nginx-reload
+fi

@@ -1,0 +1,19 @@
+#!/bin/sh
+# libnginx-mod-http-mzstd: removes the module's link as dh_nginx does, and
+# reloads nginx without the module.
+set -e
+
+link=/etc/nginx/modules-enabled/50-mod-http-mzstd.conf
+
+if [ "$1" = purge ]; then
+	rm -f "$link" "$link.removed"
+fi
+
+if [ "$1" = remove ]; then
+	if [ -L "$link" ]; then
+		mv "$link" "$link.removed"
+	fi
+	if command -v dpkg-trigger >/dev/null; then
+		dpkg-trigger --no-await nginx-reload
+	fi
+fi

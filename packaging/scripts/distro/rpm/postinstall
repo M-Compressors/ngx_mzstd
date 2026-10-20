@@ -1,0 +1,7 @@
+#!/bin/sh
+# nginx-mod-mzstd: /usr/share/nginx/modules/mod-mzstd.conf, which nginx.conf
+# includes, loads the module. As the distribution's nginx-mod-* packages do,
+# reload nginx on the first installation.
+if [ "$1" -eq 1 ]; then
+    /usr/bin/systemctl reload nginx.service >/dev/null 2>&1 || :
+fi
