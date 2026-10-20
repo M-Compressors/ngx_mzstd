@@ -1,0 +1,12 @@
+#!/bin/sh
+# libnginx-mod-http-mzstd: disables the module as dh_nginx does, keeping the
+# link aside so that a reinstallation enables it again.
+set -e
+
+link=/etc/nginx/modules-enabled/50-mod-http-mzstd.conf
+
+if [ "$1" = remove ] || [ "$1" = deconfigure ]; then
+	if [ -L "$link" ]; then
+		mv "$link" "$link.removed"
+	fi
+fi

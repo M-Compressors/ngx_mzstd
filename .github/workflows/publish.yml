@@ -1,0 +1,192 @@
+name: Publish
+
+# Builds deb and rpm packages of the module, tests each of them and publishes
+# them to Cloudsmith (https://cloudsmith.io/~m-compressors/repos/):
+#
+#   - nginx-module-mzstd, for nginx.org's stable and mainline packages, on
+#     every distribution release nginx.org currently builds them for: to
+#     ngx_mzstd and ngx_mzstd-mainline;
+#   - libnginx-mod-http-mzstd (Debian, Ubuntu) and nginx-mod-mzstd (RHEL,
+#     Fedora), for the distribution's own nginx: to ngx_mzstd.
+#
+# Run it by hand on a release tag (vX.Y.Z, which Sampo creates). The plan job
+# reads the targets from nginx.org and the distributions; see
+# .github/scripts/publish-matrix.py. Every package is built in a container of
+# its distribution against the sources and `nginx -V` arguments of the nginx
+# it is for (.github/scripts/package-build.sh), then installed and tested in a
+# clean container (.github/scripts/package-test.sh). Only if every target
+# passes does the publish job push anything, so a release goes out whole or
+# not at all. Packages already in the repository are skipped: rerunning on the
+# same tag fills in what is missing and never replaces a published file.
+#
+# A dry run builds and tests everything without pushing; unlike a release, it
+# can also run from a branch, to try changes to this workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      nginx_stable:
+        description: nginx.org stable version (empty for the latest)
+        type: string
+        required: false
+        default: ""
+      nginx_mainline:
+        description: nginx.org mainline version (empty for the latest)
+        type: string
+        required: false
+        default: ""
+      dry_run:
+        description: Build and test only, publish nothing
+        type: boolean
+        default: false
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # Docker's official images, from a mirror without Docker Hub's pull limits.
+  REGISTRY: public.ecr.aws/docker/library
+
+# The publish job gets an OIDC token, so every action is pinned to a commit
+# SHA; Dependabot keeps the pins current (.github/dependabot.yml).
+jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Check the ref
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" != tag ]; then
+            if [ "$DRY_RUN" != true ]; then
+              echo "::error::Publish runs on a release tag (vX.Y.Z), not on $GITHUB_REF_TYPE $GITHUB_REF_NAME"
+              exit 1
+            fi
+            echo "::warning::Dry run from $GITHUB_REF_TYPE $GITHUB_REF_NAME, not a release tag"
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Sampo tags releases as v<version> (short_tags in .sampo/config.toml).
+      - name: Check the version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match version $version in Cargo.toml (expected v$version)"
+            exit 1
+          fi
+          echo "ngx_mzstd $version"
+
+      - name: Plan targets
+        id: matrix
+        env:
+          NGINX_STABLE: ${{ inputs.nginx_stable }}
+          NGINX_MAINLINE: ${{ inputs.nginx_mainline }}
+        run: |
+          matrix=$(python3 .github/scripts/publish-matrix.py "$NGINX_STABLE" "$NGINX_MAINLINE")
+          echo "matrix=$matrix" >>"$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.name }}
+    needs: plan
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      GROUP: ${{ matrix.group }}
+      CHANNEL: ${{ matrix.channel }}
+      OS: ${{ matrix.os }}
+      RELEASE: ${{ matrix.release }}
+      CODENAME: ${{ matrix.codename }}
+      NGINX_VERSION: ${{ matrix.nginx }}
+      ARCH: ${{ matrix.arch }}
+      IMAGE: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Pull ${{ matrix.image }}
+        run: |
+          # Registries limit how fast an address can pull.
+          for i in 1 2 3 4 5; do
+            docker pull -q "$REGISTRY/$IMAGE" && exit 0
+            sleep $((i * 10))
+          done
+          exit 1
+
+      - name: Build
+        run: |
+          mkdir -p "$RUNNER_TEMP/dist"
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/src:ro" -v "$RUNNER_TEMP/dist:/out" \
+            -e GROUP -e CHANNEL -e OS -e RELEASE -e CODENAME -e NGINX_VERSION -e ARCH \
+            "$REGISTRY/$IMAGE" sh /src/.github/scripts/package-build.sh /out
+
+      - name: Test in a clean container
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/.github/scripts:/scripts:ro" -v "$RUNNER_TEMP/dist:/dist:ro" \
+            -e GROUP -e CHANNEL -e OS -e RELEASE -e CODENAME -e NGINX_VERSION -e ARCH \
+            "$REGISTRY/$IMAGE" sh /scripts/package-test.sh /dist
+
+      - name: Describe the target
+        env:
+          TARGET: ${{ toJSON(matrix) }}
+        run: echo "$TARGET" >"$RUNNER_TEMP/dist/target.json"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package-${{ matrix.id }}
+          path: ${{ runner.temp }}/dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: publish
+    needs: build
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: package-*
+          path: ${{ runner.temp }}/packages
+      - uses: cloudsmith-io/cloudsmith-cli-action@69e169e2ad9bc9a1599c2dff464061a00fe9f8ba # v3.1.1
+        with:
+          cli-version: 1.27.0
+          oidc-namespace: m-compressors
+          oidc-service-slug: github-actions-kizk
+          verify-auth: "true"
+      - name: Push to Cloudsmith
+        run: .github/scripts/cloudsmith-publish.sh "$RUNNER_TEMP/packages"
+
+  # The summary that a dry run would have published: no credentials, no
+  # pushes.
+  dry-run:
+    name: dry run summary
+    needs: build
+    if: ${{ inputs.dry_run }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: package-*
+          path: ${{ runner.temp }}/packages
+      - name: Summarize
+        env:
+          DRY_RUN: "true"
+        run: .github/scripts/cloudsmith-publish.sh "$RUNNER_TEMP/packages"
