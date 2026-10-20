@@ -111,7 +111,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Pull ${{ matrix.image }}
-        run: .github/scripts/pull-image.sh "$IMAGE"
+        run: sh .github/scripts/pull-image.sh "$IMAGE"
 
       - name: Build
         run: |
@@ -161,7 +161,7 @@ jobs:
           oidc-service-slug: github-actions-kizk
           verify-auth: "true"
       - name: Push to Cloudsmith
-        run: .github/scripts/cloudsmith-publish.sh "$RUNNER_TEMP/packages"
+        run: sh .github/scripts/cloudsmith-publish.sh "$RUNNER_TEMP/packages"
 
   # The summary that a dry run would have published: no credentials, no
   # pushes.
@@ -179,4 +179,4 @@ jobs:
       - name: Summarize
         env:
           DRY_RUN: "true"
-        run: .github/scripts/cloudsmith-publish.sh "$RUNNER_TEMP/packages"
+        run: sh .github/scripts/cloudsmith-publish.sh "$RUNNER_TEMP/packages"
