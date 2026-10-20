@@ -1,5 +1,11 @@
 # ngx_mzstd
 
+## 0.2.3 — 2026-10-20
+
+### Patch changes
+
+- [f524020](https://github.com/M-Compressors/ngx_mzstd/commit/f524020cf8901c85f711c3cee4fd114a4be2026c) Prebuilt deb and rpm packages for amd64 and arm64 on Cloudsmith: `nginx-module-mzstd` for nginx.org's stable and mainline nginx, on every distribution release nginx.org packages for, and `libnginx-mod-http-mzstd` and `nginx-mod-mzstd` for the nginx of Debian, Ubuntu, RHEL-compatible distributions and Fedora, from 1.25.4 on. See "Installation from packages" in the README. — Thanks @Mnwa!
+
 ## 0.2.2 — 2026-10-18
 
 ### Patch changes
