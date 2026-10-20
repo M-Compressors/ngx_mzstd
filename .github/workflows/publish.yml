@@ -47,10 +47,6 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  # Docker's official images, from a mirror without Docker Hub's pull limits.
-  REGISTRY: public.ecr.aws/docker/library
-
 # The publish job gets an OIDC token, so every action is pinned to a commit
 # SHA; Dependabot keeps the pins current (.github/dependabot.yml).
 jobs:
@@ -115,13 +111,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Pull ${{ matrix.image }}
-        run: |
-          # Registries limit how fast an address can pull.
-          for i in 1 2 3 4 5; do
-            docker pull -q "$REGISTRY/$IMAGE" && exit 0
-            sleep $((i * 10))
-          done
-          exit 1
+        run: .github/scripts/pull-image.sh "$IMAGE"
 
       - name: Build
         run: |
@@ -129,14 +119,14 @@ jobs:
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/src:ro" -v "$RUNNER_TEMP/dist:/out" \
             -e GROUP -e CHANNEL -e OS -e RELEASE -e CODENAME -e NGINX_VERSION -e ARCH \
-            "$REGISTRY/$IMAGE" sh /src/.github/scripts/package-build.sh /out
+            "$IMAGE" sh /src/.github/scripts/package-build.sh /out
 
       - name: Test in a clean container
         run: |
           docker run --rm \
             -v "$GITHUB_WORKSPACE/.github/scripts:/scripts:ro" -v "$RUNNER_TEMP/dist:/dist:ro" \
             -e GROUP -e CHANNEL -e OS -e RELEASE -e CODENAME -e NGINX_VERSION -e ARCH \
-            "$REGISTRY/$IMAGE" sh /scripts/package-test.sh /dist
+            "$IMAGE" sh /scripts/package-test.sh /dist
 
       - name: Describe the target
         env:

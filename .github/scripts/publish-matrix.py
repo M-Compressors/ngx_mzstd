@@ -63,7 +63,7 @@ ARCHES = {
 
 REPOSITORY = {"stable": "ngx_mzstd", "mainline": "ngx_mzstd-mainline"}
 
-REGISTRY = os.environ.get("REGISTRY", "public.ecr.aws/docker/library")
+PULL_IMAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pull-image.sh")
 
 
 def fetch(url):
@@ -150,9 +150,12 @@ fi
 
 def distro_nginx_version(image):
     """Reads the version of nginx that a release's own repositories have."""
+    pulled = subprocess.run(["sh", PULL_IMAGE, image], capture_output=True, text=True)
+    if pulled.returncode != 0:
+        raise RuntimeError(f"cannot pull {image}: {pulled.stderr.strip()}")
     for attempt in range(3):
         result = subprocess.run(
-            ["docker", "run", "--rm", f"{REGISTRY}/{image}", "sh", "-c", PROBE],
+            ["docker", "run", "--rm", image, "sh", "-c", PROBE],
             capture_output=True,
             text=True,
         )
