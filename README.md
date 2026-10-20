@@ -19,6 +19,42 @@ between responses, and one line, `zstd_thread_pool default;`, takes compression
 out of the worker's event loop and spreads it over the threads of an NGINX
 thread pool.
 
+## Contents
+
+- [Example](#example)
+- [Installation from packages](#installation-from-packages)
+- [Building](#building)
+- [Configuration directives](#configuration-directives)
+  - [`zstd_static`](#zstd_static)
+  - [`zstd`](#zstd)
+  - [`zstd_types`](#zstd_types)
+  - [`zstd_buffers`](#zstd_buffers)
+  - [`zstd_comp_level`](#zstd_comp_level)
+  - [`zstd_window`](#zstd_window)
+  - [`zstd_min_length`](#zstd_min_length)
+  - [`zstd_dict_file`](#zstd_dict_file)
+  - [`zstd_reuse_memory`](#zstd_reuse_memory)
+  - [`zstd_retention_policy`](#zstd_retention_policy)
+  - [`zstd_idle_encoders`](#zstd_idle_encoders)
+  - [`zstd_thread_pool`](#zstd_thread_pool)
+  - [`zstd_parallel_segment_size`](#zstd_parallel_segment_size)
+  - [`zstd_parallel_tasks`](#zstd_parallel_tasks)
+  - [`zstd_parallel_compressors`](#zstd_parallel_compressors)
+- [Variables](#variables)
+  - [`$zstd_ratio`](#zstd_ratio)
+- [Sample configuration](#sample-configuration)
+- [Together with ngx_mbrotli](#together-with-ngx_mbrotli)
+- [Differences from tokers/zstd-nginx-module](#differences-from-tokerszstd-nginx-module)
+- [Benchmarks](#benchmarks)
+  - [Latency of other requests](#latency-of-other-requests)
+  - [One large response](#one-large-response)
+  - [CPU time per request](#cpu-time-per-request)
+  - [Thread pool overhead](#thread-pool-overhead)
+- [Implementation notes](#implementation-notes)
+- [Testing](#testing)
+- [Contributing and releases](#contributing-and-releases)
+- [License](#license)
+
 ## Example
 
 Compression on a thread pool, so that long responses and high levels do not hold
