@@ -31,7 +31,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
       - name: Prepare release PR or publish
         id: sampo
-        uses: bruits/sampo/crates/sampo-github-action@11306bad0caaa58c8a36fa203695c5f2cacc4344 # cargo-sampo-github-action-v0.20.0
+        uses: bruits/sampo/crates/sampo-github-action@6de5d881680073503589c77a370b224de0b867aa # cargo-sampo-github-action-v0.20.0
         with:
           command: auto
           create-github-release: true
