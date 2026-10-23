@@ -6,7 +6,17 @@ updates:
       - /.github/actions/setup-nginx
     schedule:
       interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
   - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # mzstd updates change what responses are compressed into and need a
+      # changeset of their own, so they stay out of the group.
+      cargo-minor-and-patch:
+        update-types: [minor, patch]
+        exclude-patterns: [mzstd]

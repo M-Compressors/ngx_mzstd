@@ -1,0 +1,45 @@
+name: Performance problem
+description: Throughput, latency, CPU, or memory use is worse than expected, than tokers/zstd-nginx-module, or than an earlier release.
+labels: ["performance"]
+body:
+  - type: textarea
+    id: workload
+    attributes:
+      label: Workload
+      description: |
+        Response types and sizes, request rate and concurrency, and the
+        relevant configuration (`zstd_comp_level`, `zstd_window`,
+        `zstd_thread_pool`, memory reuse settings, worker count).
+    validations:
+      required: true
+  - type: textarea
+    id: measurements
+    attributes:
+      label: Measurements
+      description: |
+        The tool and command you ran (for example `wrk`), and the numbers for
+        both setups you compared, including compressed sizes.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: ngx_mzstd version or commit
+      placeholder: 0.2.3
+    validations:
+      required: true
+  - type: input
+    id: nginx
+    attributes:
+      label: NGINX version
+      placeholder: "1.30.5"
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: OS, CPU, and core count
+      placeholder: Ubuntu 26.04, AMD EPYC 9555P, 8 cores
+    validations:
+      required: true

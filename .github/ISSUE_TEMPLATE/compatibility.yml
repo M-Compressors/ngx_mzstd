@@ -1,0 +1,53 @@
+name: Differs from tokers/zstd-nginx-module
+description: The same configuration behaves differently than with tokers/zstd-nginx-module.
+labels: ["compatibility"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ngx_mzstd is meant as a drop-in replacement for
+        [tokers/zstd-nginx-module](https://github.com/tokers/zstd-nginx-module): the same directives, defaults and
+        variable. Some differences are deliberate; check
+        [Differences from tokers/zstd-nginx-module](https://github.com/M-Compressors/ngx_mzstd#differences-from-tokerszstd-nginx-module)
+        first.
+  - type: textarea
+    id: configuration
+    attributes:
+      label: Configuration
+      description: The configuration that behaves differently.
+      render: nginx
+    validations:
+      required: true
+  - type: textarea
+    id: upstream
+    attributes:
+      label: Behaviour with tokers/zstd-nginx-module
+      description: Which version you compared with, and what it does (headers, body, errors, log messages).
+    validations:
+      required: true
+  - type: textarea
+    id: ours
+    attributes:
+      label: Behaviour with ngx_mzstd
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Request
+      description: A request that shows the difference, such as a `curl` command.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: ngx_mzstd version or commit
+      placeholder: 0.2.3
+    validations:
+      required: true
+  - type: input
+    id: nginx
+    attributes:
+      label: NGINX version
+      placeholder: "1.30.5"
+    validations:
+      required: true

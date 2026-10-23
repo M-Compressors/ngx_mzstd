@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/M-Compressors/ngx_mzstd/security/advisories/new
+    about: Report vulnerabilities privately, not as public issues.
+  - name: Configuration directives
+    url: https://github.com/M-Compressors/ngx_mzstd#configuration-directives
+    about: Every directive, its default and context are documented in the README.
+  - name: Encoder issues
+    url: https://github.com/M-Compressors/mzstd/issues
+    about: Problems with the Zstandard encoder itself belong in mzstd.

@@ -762,6 +762,14 @@ as browsers do.
 
 ## Contributing and releases
 
+Bug reports and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md)
+for the setup and the checks a change must pass, and follow the
+[Code of Conduct](CODE_OF_CONDUCT.md). If the module behaves differently from
+tokers/zstd-nginx-module with the same configuration, open an issue with the
+[Differs from tokers/zstd-nginx-module](https://github.com/M-Compressors/ngx_mzstd/issues/new?template=compatibility.yml)
+template. Report security vulnerabilities privately as described in
+[SECURITY.md](SECURITY.md), not as public issues.
+
 CI (`.github/workflows/ci.yml`) runs on pull requests and pushes to `main`:
 
 - rustfmt and clippy;

@@ -1,0 +1,78 @@
+name: Bug report
+description: A crash, error, wrong response, or configuration problem.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. If the bug could be a security problem (a worker
+        crash, memory corruption or unbounded resource use caused by a request
+        or an upstream response), do not file it here; follow
+        [SECURITY.md](https://github.com/M-Compressors/ngx_mzstd/blob/main/SECURITY.md).
+
+        If the module behaves differently from tokers/zstd-nginx-module with the same
+        configuration, use the "Differs from tokers/zstd-nginx-module" template instead.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: configuration
+    attributes:
+      label: Configuration
+      description: The relevant part of `nginx.conf`, including every `zstd_*` directive and the `load_module` line.
+      render: nginx
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Request and response
+      description: |
+        A request that reproduces the problem (a `curl` command is ideal), and
+        the response headers you got. Attach upstream responses or files if
+        they are needed.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: error.log
+      description: The relevant `error.log` lines; for a crash, a backtrace from the core dump.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: ngx_mzstd version or commit
+      placeholder: 0.2.3
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installation
+      options:
+        - Package from Cloudsmith (nginx-module-mzstd)
+        - Package from Cloudsmith (libnginx-mod-http-mzstd)
+        - Package from Cloudsmith (nginx-mod-mzstd)
+        - Built from source
+    validations:
+      required: true
+  - type: textarea
+    id: nginx
+    attributes:
+      label: Output of `nginx -V`
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: OS and architecture
+      placeholder: Debian 13, amd64
+    validations:
+      required: true
