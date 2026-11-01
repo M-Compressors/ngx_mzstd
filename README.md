@@ -528,13 +528,14 @@ compression on the fly; clients that accept only Brotli or gzip get those.
 ## Benchmarks
 
 One NGINX worker compresses static files on the fly for 8 connections at once,
-in three setups:
+in four setups:
 
 - **tokers/zstd-nginx-module**: as shipped, commit `057a7d3` with libzstd 1.5.7.
-- **Event loop**: ngx_mzstd with its default settings, compressing in the worker's
-  event loop like tokers/zstd-nginx-module.
-- **Thread pool**: ngx_mzstd with `zstd_thread_pool` on a pool of 4 threads, and
-  otherwise default settings: up to 4 tasks per response and 1m segments.
+- **ngx_mzstd, event loop**: ngx_mzstd with its default settings, compressing in the
+  worker's event loop like tokers/zstd-nginx-module.
+- **ngx_mzstd, pool, 1 task** and **4 tasks**: ngx_mzstd with `zstd_thread_pool` on a
+  pool of 4 threads and `zstd_parallel_tasks 1` or `4` (the default), so that one
+  response is compressed by up to 1 or 4 threads at once, in 1m segments.
 
 Only `zstd_comp_level` changes from row to row. The worker and its pool share 4
 CPUs. Each number is the median of three runs under WSL2 (see *Hardware, build
@@ -545,74 +546,74 @@ absolute numbers.
 
 Higher is better. In brackets, relative to tokers/zstd-nginx-module.
 
-| Response | Level | tokers/zstd-nginx-module | Event loop | Thread pool |
-|---|--:|--:|--:|--:|
-| small.json, 1.9 KB | 3 | 33,243 | 47,777 (1.44×) | 42,453 (1.28×) |
-| small.json, 1.9 KB | 9 | 3,968 | 36,116 (9.10×) | 38,706 (9.76×) |
-| small.json, 1.9 KB | 15 | 58.4 | 9,130 (156×) | 28,112 (482×) |
-| small.json, 1.9 KB | 19 | 46.0 | 5,070 (110×) | 16,152 (351×) |
-| jquery.min.js, 85 KB | 3 | 3,466 | 4,138 (1.19×) | 12,762 (3.68×) |
-| jquery.min.js, 85 KB | 9 | 841 | 855 (1.02×) | 3,298 (3.92×) |
-| jquery.min.js, 85 KB | 15 | 50.2 | 200 (3.99×) | 762 (15.2×) |
-| jquery.min.js, 85 KB | 19 | 31.2 | 83.8 (2.68×) | 323 (10.3×) |
-| react-dom.development.js, 1.03 MB | 3 | 359 | 423 (1.18×) | 1,325 (3.69×) |
-| react-dom.development.js, 1.03 MB | 9 | 91.3 | 92.9 (1.02×) | 244 (2.67×) |
-| react-dom.development.js, 1.03 MB | 15 | 12.1 | 15.6 (1.29×) | 45.7 (3.77×) |
-| react-dom.development.js, 1.03 MB | 19 | 4.99 | 6.34 (1.27×) | 16.0 (3.21×) |
-| libraries.json, 2.2 MB | 3 | 175 | 209 (1.19×) | 665 (3.79×) |
-| libraries.json, 2.2 MB | 9 | 48.4 | 49.7 (1.03×) | 114 (2.35×) |
-| libraries.json, 2.2 MB | 15 | 6.99 | 7.74 (1.11×) | 15.5 (2.21×) |
-| libraries.json, 2.2 MB | 19 | 2.37 | 2.95 (1.24×) | 6.39 (2.70×) |
+| Response | Level | tokers/zstd-nginx-module | ngx_mzstd, event loop | ngx_mzstd, pool, 1 task | ngx_mzstd, pool, 4 tasks |
+|---|--:|--:|--:|--:|--:|
+| small.json, 1.9 KB | 3 | 33,243 | 47,777 (1.44×) | 36,934 (1.11×) | 42,453 (1.28×) |
+| small.json, 1.9 KB | 9 | 3,968 | 36,116 (9.10×) | 43,643 (11.0×) | 38,706 (9.76×) |
+| small.json, 1.9 KB | 15 | 58.4 | 9,130 (156×) | 28,397 (487×) | 28,112 (482×) |
+| small.json, 1.9 KB | 19 | 46.0 | 5,070 (110×) | 16,393 (357×) | 16,152 (351×) |
+| jquery.min.js, 85 KB | 3 | 3,466 | 4,138 (1.19×) | 12,967 (3.74×) | 12,762 (3.68×) |
+| jquery.min.js, 85 KB | 9 | 841 | 855 (1.02×) | 3,312 (3.94×) | 3,298 (3.92×) |
+| jquery.min.js, 85 KB | 15 | 50.2 | 200 (3.99×) | 763 (15.2×) | 762 (15.2×) |
+| jquery.min.js, 85 KB | 19 | 31.2 | 83.8 (2.68×) | 321 (10.3×) | 323 (10.3×) |
+| react-dom.development.js, 1.03 MB | 3 | 359 | 423 (1.18×) | 1,325 (3.69×) | 1,325 (3.69×) |
+| react-dom.development.js, 1.03 MB | 9 | 91.3 | 92.9 (1.02×) | 257 (2.81×) | 244 (2.67×) |
+| react-dom.development.js, 1.03 MB | 15 | 12.1 | 15.6 (1.29×) | 46.2 (3.82×) | 45.7 (3.77×) |
+| react-dom.development.js, 1.03 MB | 19 | 4.99 | 6.34 (1.27×) | 16.3 (3.27×) | 16.0 (3.21×) |
+| libraries.json, 2.2 MB | 3 | 175 | 209 (1.19×) | 647 (3.69×) | 665 (3.79×) |
+| libraries.json, 2.2 MB | 9 | 48.4 | 49.7 (1.03×) | 118 (2.43×) | 114 (2.35×) |
+| libraries.json, 2.2 MB | 15 | 6.99 | 7.74 (1.11×) | 18.5 (2.64×) | 15.5 (2.21×) |
+| libraries.json, 2.2 MB | 19 | 2.37 | 2.95 (1.24×) | 6.29 (2.65×) | 6.39 (2.70×) |
 
 ### CPU time per request
 
 The worker's user and system CPU time per request, including the pool's
-threads, in ms. Lower is better. On the thread pool, responses longer than one
-segment (1 MB and more here) cost more, because every segment but the first
-also runs through part of the input before it.
+threads, in ms. Lower is better. On the pool, responses longer than one segment
+(1 MB and more here) cost more, because every segment but the first also runs
+through part of the input before it.
 
-| Response | Level | tokers/zstd-nginx-module | Event loop | Thread pool |
-|---|--:|--:|--:|--:|
-| small.json, 1.9 KB | 3 | 0.030 | 0.021 | 0.035 |
-| small.json, 1.9 KB | 9 | 0.251 | 0.028 | 0.045 |
-| small.json, 1.9 KB | 15 | 17.7 | 0.110 | 0.120 |
-| small.json, 1.9 KB | 19 | 21.9 | 0.197 | 0.210 |
-| jquery.min.js, 85 KB | 3 | 0.289 | 0.242 | 0.268 |
-| jquery.min.js, 85 KB | 9 | 1.19 | 1.17 | 1.18 |
-| jquery.min.js, 85 KB | 15 | 20.5 | 5.04 | 5.23 |
-| jquery.min.js, 85 KB | 19 | 32.4 | 12.0 | 12.4 |
-| react-dom.development.js, 1.03 MB | 3 | 2.78 | 2.37 | 2.93 |
-| react-dom.development.js, 1.03 MB | 9 | 10.9 | 10.8 | 16.4 |
-| react-dom.development.js, 1.03 MB | 15 | 83.9 | 64.7 | 88.6 |
-| react-dom.development.js, 1.03 MB | 19 | 201 | 159 | 252 |
-| libraries.json, 2.2 MB | 3 | 5.71 | 4.78 | 6.01 |
-| libraries.json, 2.2 MB | 9 | 20.7 | 20.1 | 35.3 |
-| libraries.json, 2.2 MB | 15 | 146 | 130 | 269 |
-| libraries.json, 2.2 MB | 19 | 424 | 342 | 640 |
+| Response | Level | tokers/zstd-nginx-module | ngx_mzstd, event loop | ngx_mzstd, pool, 1 task | ngx_mzstd, pool, 4 tasks |
+|---|--:|--:|--:|--:|--:|
+| small.json, 1.9 KB | 3 | 0.030 | 0.021 | 0.039 | 0.035 |
+| small.json, 1.9 KB | 9 | 0.251 | 0.028 | 0.041 | 0.045 |
+| small.json, 1.9 KB | 15 | 17.7 | 0.110 | 0.121 | 0.120 |
+| small.json, 1.9 KB | 19 | 21.9 | 0.197 | 0.210 | 0.210 |
+| jquery.min.js, 85 KB | 3 | 0.289 | 0.242 | 0.267 | 0.268 |
+| jquery.min.js, 85 KB | 9 | 1.19 | 1.17 | 1.18 | 1.18 |
+| jquery.min.js, 85 KB | 15 | 20.5 | 5.04 | 5.25 | 5.23 |
+| jquery.min.js, 85 KB | 19 | 32.4 | 12.0 | 12.5 | 12.4 |
+| react-dom.development.js, 1.03 MB | 3 | 2.78 | 2.37 | 2.90 | 2.93 |
+| react-dom.development.js, 1.03 MB | 9 | 10.9 | 10.8 | 15.6 | 16.4 |
+| react-dom.development.js, 1.03 MB | 15 | 83.9 | 64.7 | 86.8 | 88.6 |
+| react-dom.development.js, 1.03 MB | 19 | 201 | 159 | 246 | 252 |
+| libraries.json, 2.2 MB | 3 | 5.71 | 4.78 | 5.79 | 6.01 |
+| libraries.json, 2.2 MB | 9 | 20.7 | 20.1 | 34.0 | 35.3 |
+| libraries.json, 2.2 MB | 15 | 146 | 130 | 221 | 269 |
+| libraries.json, 2.2 MB | 19 | 424 | 342 | 641 | 640 |
 
 ### Peak memory
 
 The worker's peak resident set size (`VmHWM`), in MiB. Lower is better. On the
 thread pool, every response in flight holds encoders for its segments.
 
-| Response | Level | tokers/zstd-nginx-module | Event loop | Thread pool |
-|---|--:|--:|--:|--:|
-| small.json, 1.9 KB | 3 | 5 | 5 | 6 |
-| small.json, 1.9 KB | 9 | 14 | 5 | 6 |
-| small.json, 1.9 KB | 15 | 68 | 5 | 7 |
-| small.json, 1.9 KB | 19 | 85 | 5 | 7 |
-| jquery.min.js, 85 KB | 3 | 5 | 6 | 17 |
-| jquery.min.js, 85 KB | 9 | 15 | 6 | 18 |
-| jquery.min.js, 85 KB | 15 | 68 | 8 | 31 |
-| jquery.min.js, 85 KB | 19 | 85 | 8 | 30 |
-| react-dom.development.js, 1.03 MB | 3 | 6 | 7 | 66 |
-| react-dom.development.js, 1.03 MB | 9 | 16 | 16 | 209 |
-| react-dom.development.js, 1.03 MB | 15 | 69 | 38 | 549 |
-| react-dom.development.js, 1.03 MB | 19 | 86 | 39 | 562 |
-| libraries.json, 2.2 MB | 3 | 7 | 8 | 86 |
-| libraries.json, 2.2 MB | 9 | 17 | 17 | 291 |
-| libraries.json, 2.2 MB | 15 | 70 | 71 | 1,119 |
-| libraries.json, 2.2 MB | 19 | 87 | 56 | 937 |
+| Response | Level | tokers/zstd-nginx-module | ngx_mzstd, event loop | ngx_mzstd, pool, 1 task | ngx_mzstd, pool, 4 tasks |
+|---|--:|--:|--:|--:|--:|
+| small.json, 1.9 KB | 3 | 5 | 5 | 6 | 6 |
+| small.json, 1.9 KB | 9 | 14 | 5 | 6 | 6 |
+| small.json, 1.9 KB | 15 | 68 | 5 | 7 | 7 |
+| small.json, 1.9 KB | 19 | 85 | 5 | 7 | 7 |
+| jquery.min.js, 85 KB | 3 | 5 | 6 | 17 | 17 |
+| jquery.min.js, 85 KB | 9 | 15 | 6 | 18 | 18 |
+| jquery.min.js, 85 KB | 15 | 68 | 8 | 31 | 31 |
+| jquery.min.js, 85 KB | 19 | 85 | 8 | 28 | 30 |
+| react-dom.development.js, 1.03 MB | 3 | 6 | 7 | 51 | 66 |
+| react-dom.development.js, 1.03 MB | 9 | 16 | 16 | 159 | 209 |
+| react-dom.development.js, 1.03 MB | 15 | 69 | 38 | 413 | 549 |
+| react-dom.development.js, 1.03 MB | 19 | 86 | 39 | 443 | 562 |
+| libraries.json, 2.2 MB | 3 | 7 | 8 | 59 | 86 |
+| libraries.json, 2.2 MB | 9 | 17 | 17 | 173 | 291 |
+| libraries.json, 2.2 MB | 15 | 70 | 71 | 523 | 1,119 |
+| libraries.json, 2.2 MB | 19 | 87 | 56 | 505 | 937 |
 
 <details>
 <summary>Hardware, build and method</summary>
@@ -634,8 +635,8 @@ thread pool, every response in flight holds encoders for its segments.
 **Configuration**
 
 `worker_processes 1`, pinned to 4 CPUs on different physical cores, and
-`thread_pool cp threads=4`. For the thread pool, `zstd_thread_pool cp`.
-Everything else is left at its default, including `zstd_parallel_tasks 4`,
+`thread_pool cp threads=4`. On the pool, `zstd_thread_pool cp` with
+`zstd_parallel_tasks 1` or `4`. Everything else is left at its default, including
 `zstd_parallel_segment_size 1m`, `zstd_parallel_compressors 4` and
 `zstd_retention_policy aggressive`. Files are served from tmpfs.
 
