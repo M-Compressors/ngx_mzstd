@@ -1,5 +1,11 @@
 # ngx_mzstd
 
+## 0.2.4 — 2026-11-01
+
+### Patch changes
+
+- [aac0519](https://github.com/M-Compressors/ngx_mzstd/commit/aac0519ec52ad211ab034853d7f9dafb9223f41e) Update mzstd to 0.2.9. Reused encoders no longer slow down at levels 4-10 on responses similar to the previous ones, and levels -5 to 2 compress a few percent faster. Output is unchanged. The benchmarks in the README are measured anew. — Thanks @Mnwa!
+
 ## 0.2.3 — 2026-10-20
 
 ### Patch changes
