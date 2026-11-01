@@ -44,7 +44,14 @@ if command -v apt-get >/dev/null; then
     [ "$GROUP" = distro ] && deps="$deps dpkg-dev"
 else
     deps="gcc make pcre2-devel zlib-devel openssl-devel clang-devel tar gzip findutils"
-    [ "$GROUP" = distro ] && deps="$deps rpm-build gnupg2 dnf-command(download)"
+    if [ "$GROUP" = distro ]; then
+        deps="$deps rpm-build gnupg2 dnf-command(download)"
+        # %prep checks the tarball's signature with %gpgverify (gnupg2) or,
+        # since Fedora 43, with %openpgpverify, which this package defines.
+        if [ -n "$(dnf -q repoquery openpgpverify 2>/dev/null)" ]; then
+            deps="$deps openpgpverify"
+        fi
+    fi
 fi
 export EXTRA_PACKAGES="$deps"
 # shellcheck source-path=SCRIPTDIR
