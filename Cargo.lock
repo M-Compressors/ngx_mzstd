@@ -305,9 +305,9 @@ dependencies = [
 
 [[package]]
 name = "mzstd"
-version = "0.2.8"
+version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fcbacf3eb356c6f3b6ea82d0181a676669a71ad9086e050f0390c67a4fbc1d9f"
+checksum = "59fe572736b686fa9914e4dbea26fc80fad2852ee6294800b672a0ef4a6668f0"
 dependencies = [
  "borrowed-buf",
  "branches",

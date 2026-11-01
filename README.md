@@ -546,7 +546,7 @@ With the thread pool:
 - **Other requests are not held up.** While large responses are compressed, the
   99th percentile latency of small uncompressed requests on the same worker
   stays at 1.7–1.9 ms, as when nothing is compressed (1.9 ms). With
-  tokers/zstd-nginx-module it grows to 4.2 ms at level 3 and 198 ms at level 19,
+  tokers/zstd-nginx-module it grows to 4.0 ms at level 3 and 197 ms at level 19,
   and to about 1.5 s at level 19 when 8 large requests arrive at once.
 - **One worker serves 2.2–15 times as many requests** as with
   tokers/zstd-nginx-module on responses of 85 KB and more. The gain is largest
@@ -554,8 +554,8 @@ With the thread pool:
 - **A 2.2 MB response is sent 1.6–2.2 times as fast with 4 tasks as with 1**,
   and 1.2–1.7 times as fast as by tokers/zstd-nginx-module. Only responses
   longer than one segment gain from more tasks.
-- **CPU time per request is 1.4–2.1 times higher** than in the event loop at
-  levels 9–19 on responses of 1 MB and more, and mostly higher than with
+- **CPU time per request is 1.3–2.1 times higher** than in the event loop at
+  levels 9–19 on responses of 1 MB and more, and higher than with
   tokers/zstd-nginx-module. See [Thread pool overhead](#thread-pool-overhead).
 - **A worker needs much more memory**: each response in flight holds encoders
   for its segments, and with 8 connections a worker peaks at up to 1.1 GiB
@@ -563,16 +563,17 @@ With the thread pool:
 
 In the event loop, compared with tokers/zstd-nginx-module:
 
-- **One worker serves 0.97–4.0 times as many requests**, the most on
-  jquery.min.js at level 15.
-- **On 1.9 KB responses at levels 15 and 19, it serves 5,100–9,200 requests per
-  second against 46–58**: tokers/zstd-nginx-module spends 18–22 ms of CPU time
-  and up to 85 MiB on each such response, likely because it never declares the
-  response's length (see [Differences](#differences-from-tokerszstd-nginx-module)).
-  With the pool, ngx_mzstd serves 17,000–29,000.
-- **A worker's memory is close to tokers/zstd-nginx-module's**, and lower at
-  levels 15–19.
-- **The event loop is blocked all the same.** Small requests wait 10–22% less,
+- **One worker serves 1.02–4.0 times as many requests** on responses of 85 KB
+  and more, the most on jquery.min.js at level 15.
+- **On 1.9 KB responses at levels 9–19, it serves 5,100–36,000 requests per
+  second against 46–4,000**: tokers/zstd-nginx-module spends 0.25 ms of CPU time
+  on each such response at level 9 and 18–22 ms and up to 85 MiB at levels
+  15–19, likely because it never declares the response's length (see
+  [Differences](#differences-from-tokerszstd-nginx-module)). With the pool,
+  ngx_mzstd serves 16,000–44,000.
+- **A worker's memory is no higher than tokers/zstd-nginx-module's**, give or
+  take 1 MiB, and mostly lower at levels 15–19.
+- **The event loop is blocked all the same.** Small requests wait 5–27% less,
   only because compression itself is faster.
 
 ### Latency of other requests
@@ -583,15 +584,15 @@ about half of what tokers/zstd-nginx-module can serve, in ms:
 
 | Level, large requests | No compression | tokers/zstd | ngx_mzstd, event loop | ngx_mzstd, pool, 1 task | ngx_mzstd, pool, 4 tasks |
 |---|--:|--:|--:|--:|--:|
-| 3, 178 per second | 1.9 | 4.2 | 3.8 | 1.8 | 1.7 |
-| 19, 2 per second | 1.9 | 198 | 155 | 1.8 | 1.9 |
+| 3, 178 per second | 1.9 | 4.0 | 3.8 | 1.9 | 1.7 |
+| 19, 2 per second | 1.9 | 197 | 157 | 1.9 | 1.9 |
 
-On the pool, no small request takes more than 3.6 ms. When
+On the pool, no small request takes more than 4.4 ms. When
 the large requests come from 8 connections at once, tokers/zstd-nginx-module
 compresses them one after another, so at level 19 small requests wait for about
 8 × 200 ms; on the pool they still stay at the uncompressed level. The large
-responses themselves then take a median 319 ms with 4 tasks, 465 ms with 1 task
-and 789 ms with tokers/zstd-nginx-module.
+responses themselves then take a median 322 ms with 4 tasks, 461 ms with 1 task
+and 797 ms with tokers/zstd-nginx-module.
 
 ### One large response
 
@@ -600,13 +601,13 @@ response at a time, median of three runs, in ms:
 
 | Level | tokers/zstd | ngx_mzstd, event loop | ngx_mzstd, pool, 1 task | ngx_mzstd, pool, 4 tasks |
 |--:|--:|--:|--:|--:|
-| 3 | 5.8 | 4.9 | 5.6 | 3.4 |
-| 9 | 20.7 | 21.0 | 31.1 | 17.4 |
-| 15 | 143 | 122 | 154 | 87 |
+| 3 | 5.7 | 4.8 | 5.4 | 3.5 |
+| 9 | 20.5 | 20.1 | 30.1 | 16.8 |
+| 15 | 143 | 129 | 160 | 87 |
 | 19 | 417 | 334 | 557 | 251 |
 
 The gain from more tasks is bounded by the number of segments: react-dom (1 MiB
-and 31 KB) is only 4–34% faster with 4 tasks than with 1, and responses up to
+and 31 KB) is only 9–48% faster with 4 tasks than with 1, and responses up to
 1 MiB do not depend on the number of tasks at all.
 
 ### CPU time per request
@@ -616,12 +617,12 @@ connections, median of three runs, in ms:
 
 | Response | Level | tokers/zstd | ngx_mzstd, event loop | ngx_mzstd, pool, 1 task | ngx_mzstd, pool, 4 tasks |
 |---|--:|--:|--:|--:|--:|
-| react-dom.development.js, 1.03 MB | 3 | 2.8 | 2.4 | 3.0 | 3.1 |
-| react-dom.development.js, 1.03 MB | 9 | 11.0 | 11.1 | 15.9 | 16.4 |
-| react-dom.development.js, 1.03 MB | 19 | 201 | 157 | 243 | 247 |
-| libraries.json, 2.2 MB | 9 | 20.8 | 20.6 | 35.5 | 36.1 |
-| libraries.json, 2.2 MB | 15 | 145 | 126 | 216 | 267 |
-| libraries.json, 2.2 MB | 19 | 411 | 331 | 616 | 625 |
+| react-dom.development.js, 1.03 MB | 3 | 2.8 | 2.4 | 2.9 | 2.9 |
+| react-dom.development.js, 1.03 MB | 9 | 10.9 | 10.8 | 15.6 | 16.4 |
+| react-dom.development.js, 1.03 MB | 19 | 201 | 159 | 246 | 252 |
+| libraries.json, 2.2 MB | 9 | 20.7 | 20.1 | 34.0 | 35.3 |
+| libraries.json, 2.2 MB | 15 | 146 | 130 | 221 | 269 |
+| libraries.json, 2.2 MB | 19 | 424 | 342 | 641 | 640 |
 
 ### Thread pool overhead
 
@@ -637,8 +638,9 @@ The extra CPU time on the pool has two measured causes:
   `zstd_parallel_compressors` compressors, 4 by default; with 8 responses in
   flight, the others allocate their tables for every response. At level 15
   with 8 connections, `zstd_parallel_compressors 8` lowers CPU time per request
-  from 211 to 185 ms with 1 task and from 272 to 185 ms with 4, and serves 14%
-  and 46% more requests.
+  from 218 to 186 ms with 1 task and from 279 to 193 ms with 4, and serves 17%
+  and 42% more requests. The kept encoders raise the worker's peak memory from
+  524 to 566 MiB with 1 task and from 1.1 to 1.6 GiB with 4.
 
 A larger `zstd_parallel_segment_size` means fewer overlaps. With 4m, both files
 here fit in one segment, so a response is compressed by one task without
@@ -646,19 +648,19 @@ overlap. With 1 task and 8 connections:
 
 | Response | Level | CPU, event loop | CPU, 1m | CPU, 4m | Peak memory, 1m | Peak memory, 4m |
 |---|--:|--:|--:|--:|--:|--:|
-| react-dom.development.js, 1.03 MB | 3 | 2.4 ms | 3.0 ms | 2.5 ms | 55 MiB | 43 MiB |
-| react-dom.development.js, 1.03 MB | 9 | 11.1 ms | 15.9 ms | 12.5 ms | 171 MiB | 139 MiB |
-| react-dom.development.js, 1.03 MB | 15 | 63.8 ms | 90.1 ms | 77.3 ms | 423 MiB | 312 MiB |
-| react-dom.development.js, 1.03 MB | 19 | 157 ms | 251 ms | 170 ms | 456 MiB | 314 MiB |
-| libraries.json, 2.2 MB | 3 | 4.9 ms | 5.9 ms | 5.1 ms | 59 MiB | 60 MiB |
-| libraries.json, 2.2 MB | 9 | 20.6 ms | 36.0 ms | 23.9 ms | 177 MiB | 161 MiB |
-| libraries.json, 2.2 MB | 15 | 126 ms | 222 ms | 196 ms | 527 MiB | 492 MiB |
-| libraries.json, 2.2 MB | 19 | 331 ms | 653 ms | 385 ms | 505 MiB | 414 MiB |
+| react-dom.development.js, 1.03 MB | 3 | 2.4 ms | 2.9 ms | 2.4 ms | 53 MiB | 41 MiB |
+| react-dom.development.js, 1.03 MB | 9 | 10.8 ms | 15.4 ms | 12.2 ms | 165 MiB | 138 MiB |
+| react-dom.development.js, 1.03 MB | 15 | 64.7 ms | 86.1 ms | 75.6 ms | 393 MiB | 326 MiB |
+| react-dom.development.js, 1.03 MB | 19 | 159 ms | 249 ms | 171 ms | 455 MiB | 284 MiB |
+| libraries.json, 2.2 MB | 3 | 4.8 ms | 5.8 ms | 5.2 ms | 58 MiB | 60 MiB |
+| libraries.json, 2.2 MB | 9 | 20.1 ms | 34.3 ms | 23.0 ms | 186 MiB | 152 MiB |
+| libraries.json, 2.2 MB | 15 | 130 ms | 216 ms | 186 ms | 521 MiB | 485 MiB |
+| libraries.json, 2.2 MB | 19 | 342 ms | 638 ms | 378 ms | 508 MiB | 414 MiB |
 
-With 4m, CPU time per request is 1.04–1.21 times the event loop's instead of
-1.20–1.97 times, a worker serves 15–69% more requests, and the output is the
-same size as in the event loop; with 1m it is up to 1.3% larger. Level 15 on
-the 2.2 MB file stays at 1.55 times, because of the encoders allocated anew.
+With 4m, CPU time per request is 1.02–1.17 times the event loop's instead of
+1.20–1.87 times, a worker serves 15–70% more requests, and the output is the
+same size as in the event loop; with 1m it is up to 1.4% larger. Level 15 on
+the 2.2 MB file stays at 1.43 times, because of the encoders allocated anew.
 In exchange, only responses longer than 4 MiB are compressed by more than one
 thread at once.
 
@@ -677,7 +679,7 @@ thread at once.
 - NGINX 1.30.6, `./configure --with-compat --with-threads
   --without-http_rewrite_module`, gcc 11.4.0, both modules dynamic.
 - tokers/zstd-nginx-module at commit `057a7d3` with libzstd 1.5.7.
-- ngx_mzstd 0.2.2 with mzstd 0.2.7, `cargo build --release` (rustc 1.99.0).
+- ngx_mzstd 0.2.3 with mzstd 0.2.9, `cargo build --release` (rustc 1.99.0).
 
 **Configuration**
 
@@ -696,13 +698,16 @@ including `zstd_parallel_segment_size 1m`, `zstd_parallel_compressors 4` and
   1-second warm-up. Each run starts NGINX anew and waits until the worker has
   been idle for 300 ms. Three runs in a shuffled order; the tables show the
   median.
+- Time to send one response: the same with 1 connection, for 4 seconds
+  (10 seconds at level 19), divided by the number of responses.
 - CPU time per request is the worker's user and system time over the run, from
   `/proc/<pid>/stat`, including the pool's threads; peak memory is the worker's
   `VmHWM`.
 - Latency of other requests: wrk2 (`44a94c1`), open loop with coordinated
   omission corrected, two streams at once: small.json without
   compression at 1,000 requests per second over 32 connections, and the large
-  compressed response at a fixed rate. One 30-second run.
+  compressed response at a fixed rate, over 1 connection (one 30-second run) or
+  8 connections (median of three 30-second runs).
 - Every response, for every module, level and file, was decoded with curl's zstd
   decoder and compared with the original file by SHA-256.
 
@@ -711,7 +716,7 @@ including `zstd_parallel_segment_size 1m`, `zstd_parallel_compressors 4` and
 jQuery 3.7.1 (`jquery.min.js`, 85 KB) and React DOM 18.3.1
 (`react-dom.development.js`, 1.03 MB) from cdnjs, the full cdnjs API listing
 (`libraries.json`, 2.2 MB), and its first 10 entries (`small.json`, 1.9 KB),
-fetched on 2026-10-20.
+fetched on 2026-10-20. Measured on 2026-11-01.
 
 Not measured yet: gzip, more than one worker, slow clients, long runs and
 compression ratios beyond the correctness check.
