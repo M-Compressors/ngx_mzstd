@@ -26,7 +26,7 @@ use ngx::ffi::{
     NGX_HTTP_FORBIDDEN, NGX_HTTP_GZIP_BUFFERED, NGX_HTTP_LIF_CONF, NGX_HTTP_LOC_CONF,
     NGX_HTTP_LOC_CONF_OFFSET, NGX_HTTP_MAIN_CONF, NGX_HTTP_MAIN_CONF_OFFSET, NGX_HTTP_MODULE,
     NGX_HTTP_NOT_FOUND, NGX_HTTP_OK, NGX_HTTP_SRV_CONF, NGX_HTTP_VAR_NOCACHEABLE, NGX_LOG_ALERT,
-    NGX_LOG_EMERG, NGX_OK, ngx_alloc_chain_link, ngx_array_t, ngx_buf_t, ngx_bufs_t,
+    NGX_LOG_EMERG, NGX_OK, ngx_alloc_chain_link, ngx_array_t, ngx_buf_t, ngx_buf_tag_t, ngx_bufs_t,
     ngx_chain_add_copy, ngx_chain_t, ngx_chain_update_chains, ngx_command_t,
     ngx_conf_check_num_bounds, ngx_conf_full_name, ngx_conf_num_bounds_t, ngx_conf_post_t,
     ngx_conf_set_bufs_slot, ngx_conf_set_flag_slot, ngx_conf_set_num_slot, ngx_conf_set_size_slot,
@@ -332,8 +332,11 @@ fn module() -> &'static ngx_module_t {
 }
 
 /// Tags the output buffers this module owns, for `ngx_chain_update_chains`.
-fn buf_tag() -> *mut c_void {
-    (&raw mut ngx_http_zstd_filter_module).cast()
+///
+/// `ngx_buf_tag_t` is `void *` in NGINX and `uintptr_t` in freenginx; only `as`
+/// converts the module's address to both.
+fn buf_tag() -> ngx_buf_tag_t {
+    (&raw mut ngx_http_zstd_filter_module) as ngx_buf_tag_t
 }
 
 unsafe fn next_header_filter(r: *mut ngx_http_request_t) -> ngx_int_t {

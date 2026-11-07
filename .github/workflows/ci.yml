@@ -50,17 +50,21 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
 
   test:
-    name: test (nginx ${{ matrix.nginx }})
+    name: test (${{ matrix.server || 'nginx' }} ${{ matrix.nginx }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         nginx: ["1.28.3", "1.30.5", "1.31.6"]
+        include:
+          - server: freenginx
+            nginx: "1.31.5"
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: ./.github/actions/setup-nginx
         with:
+          server: ${{ matrix.server || 'nginx' }}
           version: ${{ matrix.nginx }}
           build: true
       - uses: Swatinem/rust-cache@v2
