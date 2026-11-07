@@ -1,5 +1,11 @@
 # ngx_mzstd
 
+## 0.2.5 — 2026-11-07
+
+### Patch changes
+
+- [b03519c](https://github.com/M-Compressors/ngx_mzstd/commit/b03519cf40cb423aff348e8c91f0a2fa1a93f261) Fix the build against freenginx, where `ngx_buf_tag_t` is `uintptr_t` rather than `void *`. CI now runs the unit and integration tests against freenginx too. — Thanks @Mnwa!
+
 ## 0.2.4 — 2026-11-01
 
 ### Patch changes
