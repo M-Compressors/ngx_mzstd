@@ -67,8 +67,8 @@ rustup +nightly component add miri rust-src
 cargo +nightly miri test
 ```
 
-CI also runs the integration tests against NGINX 1.28, 1.30 and 1.31, and
-under AddressSanitizer and LeakSanitizer; see "Contributing and releases" in the
+CI also runs the integration tests against NGINX 1.28, 1.30 and 1.31 and
+freenginx 1.31, and under AddressSanitizer and LeakSanitizer; see "Contributing and releases" in the
 README for what each job covers.
 
 ## Tests

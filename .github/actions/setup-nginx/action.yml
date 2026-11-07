@@ -5,8 +5,11 @@ description: >
   NGINX_BUILD_DIR and NGINX_BINARY.
 
 inputs:
+  server:
+    description: Which server to download, `nginx` or `freenginx`.
+    default: nginx
   version:
-    description: NGINX version to build against.
+    description: Version of the server to build against.
     default: "1.30.5"
   build:
     description: Also run `make`, producing an nginx binary.
@@ -37,23 +40,24 @@ runs:
       id: cache
       uses: actions/cache@v6
       with:
-        path: ${{ runner.temp }}/nginx-${{ inputs.version }}-${{ inputs.variant }}
-        key: nginx-${{ inputs.version }}-${{ inputs.variant }}-threads-${{ inputs.threads }}-build-${{ inputs.build }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/setup-nginx/action.yml') }}
+        path: ${{ runner.temp }}/${{ inputs.server }}-${{ inputs.version }}-${{ inputs.variant }}
+        key: ${{ inputs.server }}-${{ inputs.version }}-${{ inputs.variant }}-threads-${{ inputs.threads }}-build-${{ inputs.build }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/actions/setup-nginx/action.yml') }}
 
     - name: Download and configure NGINX
       if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       working-directory: ${{ runner.temp }}
       env:
+        SERVER: ${{ inputs.server }}
         VERSION: ${{ inputs.version }}
-        DIR: nginx-${{ inputs.version }}-${{ inputs.variant }}
+        DIR: ${{ inputs.server }}-${{ inputs.version }}-${{ inputs.variant }}
         BUILD: ${{ inputs.build }}
         THREADS: ${{ inputs.threads }}
         CONFIGURE_ARGS: ${{ inputs.configure-args }}
       run: |
         set -euo pipefail
         mkdir "$DIR"
-        curl -sSfL "https://nginx.org/download/nginx-$VERSION.tar.gz" \
+        curl -sSfL "https://$SERVER.org/download/$SERVER-$VERSION.tar.gz" \
           | tar xz --strip-components=1 -C "$DIR"
         cd "$DIR"
         if [ "$THREADS" = true ]; then
@@ -67,7 +71,7 @@ runs:
     - name: Export paths
       shell: bash
       env:
-        DIR: ${{ runner.temp }}/nginx-${{ inputs.version }}-${{ inputs.variant }}
+        DIR: ${{ runner.temp }}/${{ inputs.server }}-${{ inputs.version }}-${{ inputs.variant }}
       run: |
         dir="$DIR"
         echo "NGINX_BUILD_DIR=$dir/objs" >> "$GITHUB_ENV"

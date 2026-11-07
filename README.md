@@ -188,7 +188,8 @@ Requirements:
 - libclang (used by `nginx-sys` to generate bindings);
 - the NGINX source tree, configured with the same arguments as the NGINX binary
   that will load the module, plus `--with-compat`. Run `nginx -V` to see those
-  arguments. Only `./configure` is required, not `make`.
+  arguments. Only `./configure` is required, not `make`. A freenginx source
+  tree works the same way.
 
 ```sh
 cd nginx-1.30.5
@@ -716,8 +717,8 @@ template. Report security vulnerabilities privately as described in
 CI (`.github/workflows/ci.yml`) runs on pull requests and pushes to `main`:
 
 - rustfmt and clippy;
-- unit and integration tests against NGINX 1.28, 1.30 and 1.31, built with
-  `--with-threads`; clippy also checks a build without it;
+- unit and integration tests against NGINX 1.28, 1.30 and 1.31 and freenginx
+  1.31, built with `--with-threads`; clippy also checks a build without it;
 - the integration tests under AddressSanitizer and LeakSanitizer, with NGINX
   and the module (including the Rust standard library) instrumented, and
   `NGX_DEBUG_PALLOC` so that each pool allocation is checked on its own;
