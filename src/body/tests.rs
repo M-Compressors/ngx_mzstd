@@ -32,7 +32,7 @@ use ngx::ffi::{
     NGX_AGAIN, NGX_ERROR, NGX_OK, ngx_buf_t, ngx_buf_tag_t, ngx_chain_t, ngx_int_t, off_t,
 };
 
-use super::{BodyFilter, BufFlags, Host, Parallel, Settings};
+use super::{BodyFilter, BufFlags, Host, Outcome, Parallel, Settings, Status};
 use crate::encoder_pool::RetentionPolicy;
 
 /// The request pool, the client and the connection, as the filter sees them.
@@ -680,6 +680,53 @@ fn file_buffers_are_rejected() {
     assert!(f.is_done());
     assert_eq!(f.sizes(), None);
     assert_eq!(*f.host().errors.borrow(), ["zstd filter got a file buffer"]);
+}
+
+/// What an encoder call reports, for [`BodyFilter::check_progress`].
+fn outcome(consumed: usize, produced: usize) -> Outcome {
+    Outcome {
+        consumed,
+        produced,
+        status: Status::NeedsInput,
+    }
+}
+
+#[test]
+fn progress_up_to_the_buffers_given_is_accepted() {
+    let f = filter(None, 4, 4096);
+
+    assert!(f.check_progress(&outcome(100, 50), 100, 50).is_ok());
+    assert!(f.check_progress(&outcome(0, 0), 0, 0).is_ok());
+    assert!(f.check_progress(&outcome(99, 49), 100, 50).is_ok());
+    assert!(f.host().errors.borrow().is_empty());
+}
+
+#[test]
+fn consuming_more_than_the_input_fails() {
+    let f = filter(None, 4, 4096);
+
+    assert!(f.check_progress(&outcome(101, 50), 100, 50).is_err());
+    assert_eq!(
+        *f.host().errors.borrow(),
+        [
+            "zstd encoder overran its buffers: consumed 101 of 100 input bytes, \
+          produced 50 of 50 output bytes"
+        ]
+    );
+}
+
+#[test]
+fn producing_more_than_the_output_room_fails() {
+    let f = filter(None, 4, 4096);
+
+    assert!(f.check_progress(&outcome(100, 51), 100, 50).is_err());
+    assert_eq!(
+        *f.host().errors.borrow(),
+        [
+            "zstd encoder overran its buffers: consumed 100 of 100 input bytes, \
+          produced 51 of 50 output bytes"
+        ]
+    );
 }
 
 #[test]

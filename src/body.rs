@@ -581,6 +581,29 @@ impl<H: Host> BodyFilter<H> {
         Failed
     }
 
+    /// Rejects an encoder call that reports more bytes than the `input_len`
+    /// bytes of input and `room` bytes of output it was given, before the
+    /// counts move `in_buf.pos` and `out_buf.last`: past the input, `pos`
+    /// would pass `last`; past the output, NGINX would send memory beyond the
+    /// buffer. mzstd never does that, but the pointer arithmetic does not
+    /// rely on it.
+    fn check_progress(
+        &self,
+        progress: &Outcome,
+        input_len: usize,
+        room: usize,
+    ) -> Result<(), Failed> {
+        if progress.consumed <= input_len && progress.produced <= room {
+            return Ok(());
+        }
+        self.host.error(format_args!(
+            "zstd encoder overran its buffers: consumed {} of {input_len} input bytes, \
+             produced {} of {room} output bytes",
+            progress.consumed, progress.produced
+        ));
+        Err(Failed)
+    }
+
     /// Bytes of the current input buffer still waiting for the encoder.
     fn pending_input<'a>(&self) -> &'a [u8] {
         match unsafe { self.in_buf.as_ref() } {
@@ -699,6 +722,7 @@ impl<H: Host> BodyFilter<H> {
                 .map_err(|err| err.to_string()),
         };
         let progress = outcome.map_err(|err| self.encode_error(&err))?;
+        self.check_progress(&progress, input_len, room)?;
 
         if progress.consumed > 0 {
             unsafe { (*self.in_buf).pos = (*self.in_buf).pos.add(progress.consumed) };
