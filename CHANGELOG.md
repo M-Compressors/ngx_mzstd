@@ -1,5 +1,11 @@
 # ngx_mzstd
 
+## 0.2.6 — 2026-11-08
+
+### Patch changes
+
+- [58ae4a0](https://github.com/M-Compressors/ngx_mzstd/commit/58ae4a044f3d6c171e1a37060534eafdef7e0634) The body filter checks that each encoder call reports no more input consumed and output produced than the buffers it was given before it moves the buffer pointers, and otherwise logs an error and aborts the response. mzstd never reports more, so responses are unchanged; the check keeps the module's pointer arithmetic from relying on that. — Thanks @Mnwa!
+
 ## 0.2.5 — 2026-11-07
 
 ### Patch changes
