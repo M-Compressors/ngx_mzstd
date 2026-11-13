@@ -1,5 +1,11 @@
 # ngx_mzstd
 
+## 0.2.7 — 2026-11-13
+
+### Patch changes
+
+- [1f7b27c](https://github.com/M-Compressors/ngx_mzstd/commit/1f7b27c959d71b3838522c03e6194715a1540ba5) Update mzstd — Thanks @Mnwa!
+
 ## 0.2.6 — 2026-11-08
 
 ### Patch changes
