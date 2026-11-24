@@ -9,6 +9,12 @@ It is a drop-in replacement for
 two modules, directives, defaults and variable, so existing configurations keep
 working unchanged.
 
+**Up to date with zstd 1.6.0, the latest release.** mzstd is a pure-Rust port of
+the zstd 1.6.0 encoder: compressed in the event loop, a response is
+byte-identical to what libzstd 1.6.0 writes with the same parameters. There is
+no C library to install or keep up to date, while tokers/zstd-nginx-module
+compresses with whichever libzstd the system ships.
+
 - `ngx_http_zstd_filter_module` compresses responses on the fly.
 - `ngx_http_zstd_static_module` serves pre-compressed `.zst` files.
 
@@ -523,7 +529,7 @@ compression on the fly; clients that accept only Brotli or gzip get those.
 - **Responses can be compressed on a thread pool** (`zstd_thread_pool`), in
   segments that are compressed in parallel.
 - The pure-Rust mzstd encoder replaces the C library. Driven with the same
-  calls and parameters, it writes the same bytes as zstd 1.5.7; output compressed
+  calls and parameters, it writes the same bytes as zstd 1.6.0; output compressed
   on a thread pool is a valid frame but differs.
 
 ## Benchmarks
