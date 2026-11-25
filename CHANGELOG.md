@@ -1,5 +1,11 @@
 # ngx_mzstd
 
+## 0.2.8 — 2026-11-24
+
+### Patch changes
+
+- [6bc2a9d](https://github.com/M-Compressors/ngx_mzstd/commit/6bc2a9d40a3c3bd0f0d67a4cdd8aa0630804c85e) Support zstd 1.6.0 compatibility — Thanks @Mnwa!
+
 ## 0.2.7 — 2026-11-13
 
 ### Patch changes
